@@ -215,6 +215,59 @@
     .card.steer .value { color: var(--accent2); }
     .card.throttle .value { color: var(--accent); }
 
+    /* ── 三态模式切换器 ─────────────────────────────── */
+    .mode-switcher {
+      display: flex;
+      gap: 0;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+
+    .mode-btn {
+      flex: 1;
+      font-family: inherit;
+      font-size: 0.76rem;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      background: transparent;
+      border: none;
+      padding: 0.6rem 0.4rem;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+      white-space: nowrap;
+    }
+
+    .mode-btn:not(:last-child) {
+      border-right: 1px solid var(--border);
+    }
+
+    .mode-btn:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .mode-btn.mode-active {
+      color: #fff;
+      font-weight: 600;
+    }
+
+    .mode-btn.mode-manual.mode-active {
+      background: rgba(59, 158, 255, 0.25);
+      box-shadow: inset 0 -2px 0 var(--accent2);
+    }
+
+    .mode-btn.mode-semi.mode-active {
+      background: rgba(255, 176, 32, 0.25);
+      box-shadow: inset 0 -2px 0 var(--warn);
+    }
+
+    .mode-btn.mode-auto.mode-active {
+      background: rgba(0, 212, 170, 0.25);
+      box-shadow: inset 0 -2px 0 var(--accent);
+    }
+
     .dashboard-grid {
       display: grid;
       grid-template-columns: 1fr;
@@ -293,6 +346,33 @@
 
     .control-panel {
       margin-top: 0;
+      position: relative;
+    }
+
+    .control-mask {
+      position: absolute;
+      inset: 0;
+      background: rgba(10, 14, 20, 0.78);
+      backdrop-filter: blur(2px);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .control-mask.visible {
+      opacity: 1;
+    }
+
+    .control-mask span {
+      font-size: 0.85rem;
+      letter-spacing: 0.1em;
+      color: var(--accent);
+      font-weight: 500;
     }
 
     .control-card label {
@@ -422,7 +502,11 @@
       </div>
       <div class="card">
         <label>run_mode · 运行模式</label>
-        <div class="value status-ok" id="valStatus">—</div>
+        <div class="mode-switcher" id="modeSwitcher">
+          <button type="button" class="mode-btn mode-manual mode-active" data-mode="MANUAL">纯手动</button>
+          <button type="button" class="mode-btn mode-semi" data-mode="SEMI_AUTO">半自动</button>
+          <button type="button" class="mode-btn mode-auto" data-mode="AUTO">全自动</button>
+        </div>
       </div>
     </section>
 
@@ -462,6 +546,7 @@
     </section>
 
     <section class="control-panel">
+      <div class="control-mask" id="controlMask"><span>AI 控制中 · 按 WASD 接管</span></div>
       <div class="card control-card">
         <label>逆向控制 · 线控面板 <span class="kbd-ready" id="kbdReady">⌨ WASD+E</span></label>
         <div class="control-grid">

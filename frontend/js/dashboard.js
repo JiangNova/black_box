@@ -12,6 +12,25 @@ const MAX_LIVE_POINTS = 50;
 const WS_URL = "ws://127.0.0.1:8000/ws";
 const RECONNECT_MS = 2000;
 
+/* ── 运行模式状态 ──────────────────────────────────── */
+let _currentMode = "MANUAL";
+
+function _applyMode(mode) {
+  if (_currentMode === mode) return;
+  _currentMode = mode;
+  UI.setModeUI(mode);
+  UI.setControlMasked(mode === "AUTO");
+}
+
+function sendModeSwitch(target) {
+  if (Replay.enabled) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    console.warn("WebSocket 未连接，无法切换模式:", target);
+    return;
+  }
+  ws.send(JSON.stringify({ type: "mode_switch", target }));
+}
+
 /* ═══════════════════════════════════════════════════════════
    1. UI 结构层
    ═══════════════════════════════════════════════════════════ */
@@ -20,7 +39,6 @@ const UI = {
   cards: {
     steer: document.getElementById("valSteer"),
     throttle: document.getElementById("valThrottle"),
-    status: document.getElementById("valStatus"),
   },
   euler: {
     yaw: document.getElementById("valYaw"),
@@ -69,10 +87,8 @@ const UI = {
     this.cards.throttle.textContent =
       lidarFront != null ? `${Number(lidarFront).toFixed(2)} m` : "—";
 
-    const mode = runMode ?? "—";
-    this.cards.status.textContent = mode;
-    this.cards.status.className =
-      "value " + (mode === "MANUAL" ? "status-ok" : "status-warn");
+    const mode = runMode ?? "MANUAL";
+    if (mode !== _currentMode) _applyMode(mode);
 
     this.updateEuler(data.imu);
   },
@@ -84,10 +100,8 @@ const UI = {
     this.cards.steer.textContent = `${Number(columnar.speed_mps[i]).toFixed(3)} m/s`;
     this.cards.throttle.textContent = `${Number(columnar.lidar_front_m[i]).toFixed(2)} m`;
 
-    const mode = columnar.run_modes?.[i] ?? "—";
-    this.cards.status.textContent = mode;
-    this.cards.status.className =
-      "value " + (mode === "MANUAL" ? "status-ok" : "status-warn");
+    const mode = columnar.run_modes?.[i] ?? "MANUAL";
+    if (mode !== _currentMode) _applyMode(mode);
 
     this.updateEuler({
       yaw: columnar.imu_yaw[i],
@@ -137,6 +151,17 @@ const UI = {
     } else {
       btn.classList.remove("active");
     }
+  },
+
+  setModeUI(mode) {
+    document.querySelectorAll(".mode-btn").forEach((btn) => {
+      btn.classList.toggle("mode-active", btn.dataset.mode === mode);
+    });
+  },
+
+  setControlMasked(masked) {
+    const el = document.getElementById("controlMask");
+    if (el) el.classList.toggle("visible", masked);
   },
 };
 
@@ -647,6 +672,17 @@ function _isFormElement(el) {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
 
+function initModeSwitcher() {
+  document.querySelectorAll(".mode-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const mode = btn.dataset.mode;
+      if (mode === _currentMode) return;
+      _applyMode(mode);
+      sendModeSwitch(mode);
+    });
+  });
+}
+
 function initControlPanel() {
   // ── 鼠标点击 ──────────────────────────────────────────
   document.querySelectorAll("[data-action]").forEach((btn) => {
@@ -658,7 +694,7 @@ function initControlPanel() {
     });
   });
 
-  // ── 键盘盲操 ──────────────────────────────────────────
+  // ── 键盘盲操 + 人类接管 ─────────────────────────────
   document.addEventListener("keydown", (e) => {
     // 焦点在表单元素上时跳过，避免与复盘下拉框等冲突
     if (_isFormElement(e.target)) return;
@@ -668,6 +704,13 @@ function initControlPanel() {
 
     e.preventDefault();
     if (e.repeat) return;
+
+    // 人类接管：SEMI_AUTO / AUTO 下按 WASD 方向键 → 强制降级到 MANUAL
+    const isDirection = action !== "E_STOP";
+    if (isDirection && (_currentMode === "SEMI_AUTO" || _currentMode === "AUTO")) {
+      _applyMode("MANUAL");
+      sendModeSwitch("MANUAL");
+    }
 
     _pressedKeys.add(e.code);
     UI.setKeyActive(action, true);
@@ -698,5 +741,6 @@ function initControlPanel() {
 
 Charts.init();
 Replay.init();
+initModeSwitcher();
 initControlPanel();
 connect();
