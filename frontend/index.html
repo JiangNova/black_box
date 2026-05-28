@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>黑盒 2.0 · 遥测大屏</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  <style>
+    :root {
+      --bg: #0a0e14;
+      --panel: #111820;
+      --border: #1e2a3a;
+      --accent: #00d4aa;
+      --accent2: #3b9eff;
+      --warn: #ffb020;
+      --text: #e6edf3;
+      --muted: #6b7b8c;
+      --glow: rgba(0, 212, 170, 0.15);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Segoe UI", "SF Pro Display", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      background-image:
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0, 212, 170, 0.08), transparent),
+        linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.4) 100%);
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    header h1 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .replay-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex: 1;
+      justify-content: center;
+      min-width: 240px;
+    }
+
+    .replay-toggle {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.75rem;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .replay-toggle input {
+      accent-color: var(--accent);
+      width: 14px;
+      height: 14px;
+      cursor: pointer;
+    }
+
+    .replay-toggle.active span {
+      color: var(--warn);
+    }
+
+    #replaySelect {
+      font-family: inherit;
+      font-size: 0.75rem;
+      color: var(--text);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.4rem 0.6rem;
+      min-width: 220px;
+      cursor: pointer;
+    }
+
+    #replaySelect:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    #replaySelect option {
+      background: var(--panel);
+    }
+
+    .replay-status {
+      font-size: 0.65rem;
+      color: var(--warn);
+      letter-spacing: 0.05em;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .replay-status.visible {
+      opacity: 1;
+    }
+
+    .conn {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.75rem;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+
+    .conn-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #e74c3c;
+      box-shadow: 0 0 8px #e74c3c;
+      transition: background 0.3s, box-shadow 0.3s;
+    }
+
+    .conn-dot.connecting {
+      background: var(--warn);
+      box-shadow: 0 0 10px var(--warn);
+    }
+
+    .conn-dot.online {
+      background: var(--accent);
+      box-shadow: 0 0 10px var(--accent);
+    }
+
+    main { padding: 1.25rem 1.5rem 1.5rem; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, var(--accent), transparent);
+    }
+
+    .card label {
+      display: block;
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.5rem;
+    }
+
+    .card .value {
+      font-size: 2.25rem;
+      font-weight: 300;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.1;
+    }
+
+    .card .value.status-ok { color: var(--accent); }
+    .card .value.status-warn { color: var(--warn); }
+
+    .card.steer .value { color: var(--accent2); }
+    .card.throttle .value { color: var(--accent); }
+
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .charts {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1rem;
+    }
+
+    .side-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .euler-cards {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.75rem;
+    }
+
+    .card.euler {
+      padding: 1rem 1.1rem;
+    }
+
+    .card.euler .value {
+      font-size: 1.65rem;
+      color: var(--accent2);
+    }
+
+    .chart-panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem 1rem 0.5rem;
+    }
+
+    .chart-panel h2 {
+      font-size: 0.75rem;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-bottom: 0.25rem;
+      padding-left: 0.25rem;
+    }
+
+    .chart-box { width: 100%; height: 280px; }
+    .chart-box.radar-box { height: 240px; }
+
+    footer {
+      text-align: center;
+      padding: 0.75rem;
+      font-size: 0.65rem;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
+    }
+
+    @media (min-width: 900px) {
+      .euler-cards { grid-template-columns: 1fr; }
+    }
+
+    @media (min-width: 1100px) {
+      .charts { grid-template-columns: 1fr 1fr; }
+      .dashboard-grid { grid-template-columns: 1fr 260px; }
+      .euler-cards { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 720px) {
+      .cards { grid-template-columns: 1fr; }
+      .replay-bar { justify-content: flex-start; flex-wrap: wrap; }
+    }
+
+    .control-panel {
+      margin-top: 0;
+    }
+
+    .control-card label {
+      margin-bottom: 1rem;
+    }
+
+    .control-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+
+    .control-btn {
+      font-family: inherit;
+      font-size: 0.85rem;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      color: var(--text);
+      background: rgba(0, 212, 170, 0.06);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.85rem 0.5rem;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .control-btn:hover {
+      border-color: var(--accent);
+      background: rgba(0, 212, 170, 0.12);
+    }
+
+    .control-btn.active {
+      border-color: var(--accent);
+      background: var(--glow);
+      box-shadow: 0 0 12px var(--glow);
+    }
+
+    .control-btn kbd {
+      display: block;
+      font-size: 0.65rem;
+      color: var(--muted);
+      margin-top: 0.25rem;
+      font-weight: 400;
+    }
+
+    .estop-btn {
+      width: 100%;
+      font-family: inherit;
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #fff;
+      background: linear-gradient(180deg, #ff4757 0%, #c0392b 100%);
+      border: 2px solid #ff6b7a;
+      border-radius: 8px;
+      padding: 1rem;
+      cursor: pointer;
+      box-shadow: 0 0 20px rgba(231, 76, 60, 0.45);
+      transition: transform 0.1s, box-shadow 0.15s;
+    }
+
+    .estop-btn:hover {
+      box-shadow: 0 0 28px rgba(231, 76, 60, 0.65);
+    }
+
+    .estop-btn:active,
+    .estop-btn.active {
+      transform: scale(0.98);
+      box-shadow: 0 0 36px rgba(231, 76, 60, 0.85);
+    }
+
+    .estop-btn kbd {
+      display: block;
+      font-size: 0.65rem;
+      color: rgba(255, 255, 255, 0.75);
+      margin-top: 0.35rem;
+      font-weight: 400;
+      letter-spacing: 0.08em;
+    }
+
+    @media (max-width: 600px) {
+      .control-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>黑盒 2.0 · 遥测大屏</h1>
+
+    <div class="replay-bar">
+      <label class="replay-toggle" id="replayToggleLabel">
+        <input type="checkbox" id="replayToggle" />
+        <span>复盘模式</span>
+      </label>
+      <select id="replaySelect" disabled>
+        <option value="">— 选择实验批次 —</option>
+      </select>
+      <span class="replay-status" id="replayStatus">⏳ 历史回放中 · 实时流已暂停</span>
+    </div>
+
+    <div class="conn">
+      <span class="conn-dot" id="connDot"></span>
+      <span id="connLabel">未连接</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="cards">
+      <div class="card steer">
+        <label>speed_mps · 线速度</label>
+        <div class="value" id="valSteer">—</div>
+      </div>
+      <div class="card throttle">
+        <label>lidar_front · 前向测距</label>
+        <div class="value" id="valThrottle">—</div>
+      </div>
+      <div class="card">
+        <label>run_mode · 运行模式</label>
+        <div class="value status-ok" id="valStatus">—</div>
+      </div>
+    </section>
+
+    <section class="dashboard-grid">
+      <div class="charts">
+        <div class="chart-panel">
+          <h2>底盘 · speed_mps (m/s)</h2>
+          <div class="chart-box" id="chartControl"></div>
+        </div>
+        <div class="chart-panel">
+          <h2>姿态 · gyro_z_rads (rad/s)</h2>
+          <div class="chart-box" id="chartGyro"></div>
+        </div>
+      </div>
+
+      <aside class="side-panel">
+        <div class="euler-cards">
+          <div class="card euler">
+            <label>yaw · 偏航角</label>
+            <div class="value" id="valYaw">0.00</div>
+          </div>
+          <div class="card euler">
+            <label>pitch · 俯仰角</label>
+            <div class="value" id="valPitch">0.00</div>
+          </div>
+          <div class="card euler">
+            <label>roll · 横滚角</label>
+            <div class="value" id="valRoll">0.00</div>
+          </div>
+        </div>
+
+        <div class="chart-panel">
+          <h2>感知 · lidar_zones_m (m)</h2>
+          <div class="chart-box radar-box" id="chartLidar"></div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="control-panel">
+      <div class="card control-card">
+        <label>逆向控制 · 线控面板</label>
+        <div class="control-grid">
+          <button type="button" class="control-btn" data-action="FORWARD">前进<kbd>W</kbd></button>
+          <button type="button" class="control-btn" data-action="BACKWARD">后退<kbd>S</kbd></button>
+          <button type="button" class="control-btn" data-action="LEFT">左转<kbd>A</kbd></button>
+          <button type="button" class="control-btn" data-action="RIGHT">右转<kbd>D</kbd></button>
+        </div>
+        <button type="button" class="estop-btn" data-action="E_STOP">紧急急停 · E-STOP<kbd>E</kbd></button>
+      </div>
+    </section>
+  </main>
+
+  <footer>WebSocket · ws://127.0.0.1:8000/ws · 实时 50 点窗口 / 复盘 dataZoom + LTTB</footer>
+
+  <script src="js/dashboard.js"></script>
+</body>
+</html>
