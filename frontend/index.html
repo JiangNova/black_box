@@ -113,6 +113,30 @@
       opacity: 1;
     }
 
+    .export-btn {
+      font-family: inherit;
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      color: var(--text);
+      background: rgba(0, 212, 170, 0.08);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.4rem 0.75rem;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s, border-color 0.15s, opacity 0.2s;
+    }
+
+    .export-btn:hover:not(:disabled) {
+      border-color: var(--accent);
+      background: rgba(0, 212, 170, 0.18);
+    }
+
+    .export-btn:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+
     .conn {
       display: flex;
       align-items: center;
@@ -275,6 +299,14 @@
       margin-bottom: 1rem;
     }
 
+    .kbd-ready {
+      font-size: 0.65rem;
+      color: var(--accent);
+      margin-left: 0.5rem;
+      letter-spacing: 0.08em;
+      opacity: 0.7;
+    }
+
     .control-grid {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
@@ -368,6 +400,7 @@
       <select id="replaySelect" disabled>
         <option value="">— 选择实验批次 —</option>
       </select>
+      <button type="button" class="export-btn" id="exportBtn" disabled>⬇ 导出数据集</button>
       <span class="replay-status" id="replayStatus">⏳ 历史回放中 · 实时流已暂停</span>
     </div>
 
@@ -430,7 +463,7 @@
 
     <section class="control-panel">
       <div class="card control-card">
-        <label>逆向控制 · 线控面板</label>
+        <label>逆向控制 · 线控面板 <span class="kbd-ready" id="kbdReady">⌨ WASD+E</span></label>
         <div class="control-grid">
           <button type="button" class="control-btn" data-action="FORWARD">前进<kbd>W</kbd></button>
           <button type="button" class="control-btn" data-action="BACKWARD">后退<kbd>S</kbd></button>

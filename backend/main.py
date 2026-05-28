@@ -1,8 +1,11 @@
+import csv
+import io
 import json
 import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from database.db_logger import db_logger
@@ -60,6 +63,56 @@ async def get_run_telemetry(run_id: int):
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
     return telemetry
+
+
+CSV_HEADER = [
+    "timestamp_us",
+    "run_mode",
+    "chassis_speed_mps",
+    "chassis_steer_angle_deg",
+    "imu_yaw",
+    "imu_pitch",
+    "imu_roll",
+    "imu_gyro_z_rads",
+    "lidar_front_m",
+    "lidar_left_m",
+    "lidar_right_m",
+]
+
+
+@app.get("/api/runs/{run_id}/export")
+async def export_run_csv(run_id: int):
+    """流式导出指定批次的遥测数据为 CSV 文件，边查边写，避免内存膨胀。"""
+    if run_id <= 0:
+        raise HTTPException(status_code=400, detail="run_id must be a positive integer")
+
+    if not await db_logger.run_exists(run_id):
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+
+    async def csv_generator():
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+
+        # 表头
+        writer.writerow(CSV_HEADER)
+        yield buf.getvalue()
+        buf.seek(0)
+        buf.truncate(0)
+
+        # 数据行 — 逐行 yield，绝不缓存全部数据
+        async for row in db_logger.export_telemetry_rows(run_id):
+            writer.writerow([row[h] for h in CSV_HEADER])
+            yield buf.getvalue()
+            buf.seek(0)
+            buf.truncate(0)
+
+    return StreamingResponse(
+        csv_generator(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename=chassis_telemetry_run_{run_id}.csv"
+        },
+    )
 
 
 @app.websocket("/ws")

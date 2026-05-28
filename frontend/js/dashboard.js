@@ -36,6 +36,7 @@ const UI = {
     toggleLabel: document.getElementById("replayToggleLabel"),
     select: document.getElementById("replaySelect"),
     status: document.getElementById("replayStatus"),
+    exportBtn: document.getElementById("exportBtn"),
   },
   controlButtons: {},
 
@@ -123,7 +124,19 @@ const UI = {
     if (!btn) return;
     btn.classList.add("active");
     clearTimeout(btn._flashTimer);
-    btn._flashTimer = setTimeout(() => btn.classList.remove("active"), 150);
+    btn._flashTimer = setTimeout(() => btn.classList.remove("active"), 200);
+  },
+
+  // 键盘按下/抬起专用：保持 active 直到 keyup，避免与 flash timeout 冲突
+  setKeyActive(action, active) {
+    const btn = this.controlButtons[action];
+    if (!btn) return;
+    clearTimeout(btn._flashTimer);
+    if (active) {
+      btn.classList.add("active");
+    } else {
+      btn.classList.remove("active");
+    }
   },
 };
 
@@ -524,6 +537,7 @@ const Charts = {
 const Replay = {
   enabled: false,
   loading: false,
+  _currentRunId: null,
 
   init() {
     UI.replay.toggle.addEventListener("change", () => {
@@ -532,7 +546,17 @@ const Replay = {
 
     UI.replay.select.addEventListener("change", () => {
       const runId = UI.replay.select.value;
-      if (runId) this.loadRun(Number(runId));
+      if (runId) {
+        this.loadRun(Number(runId));
+      } else {
+        this._currentRunId = null;
+        UI.replay.exportBtn.disabled = true;
+      }
+    });
+
+    UI.replay.exportBtn.addEventListener("click", () => {
+      if (this._currentRunId == null) return;
+      window.location.href = `/api/runs/${this._currentRunId}/export`;
     });
   },
 
@@ -544,7 +568,9 @@ const Replay = {
       UI.setConnState(ws?.readyState === WebSocket.OPEN ? "online" : "offline");
       await this.fetchRuns();
     } else {
+      this._currentRunId = null;
       UI.replay.select.value = "";
+      UI.replay.exportBtn.disabled = true;
       Charts.resetToLive();
       UI.setConnState(ws?.readyState === WebSocket.OPEN ? "online" : "offline");
     }
@@ -592,6 +618,8 @@ const Replay = {
 
       const columnar = await res.json();
       Charts.loadHistory(columnar);
+      this._currentRunId = runId;
+      UI.replay.exportBtn.disabled = false;
     } catch (err) {
       console.error("拉取 telemetry 失败:", err);
     } finally {
@@ -601,7 +629,7 @@ const Replay = {
 };
 
 /* ═══════════════════════════════════════════════════════════
-   线控面板
+   线控面板 + 全局键盘盲操
    ═══════════════════════════════════════════════════════════ */
 
 const KEY_MAP = {
@@ -612,24 +640,55 @@ const KEY_MAP = {
   KeyE: "E_STOP",
 };
 
-function handleControlAction(action) {
-  UI.flashControlButton(action);
-  sendControl(action);
+const _pressedKeys = new Set();
+
+function _isFormElement(el) {
+  const tag = el.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
 
 function initControlPanel() {
+  // ── 鼠标点击 ──────────────────────────────────────────
   document.querySelectorAll("[data-action]").forEach((btn) => {
     const action = btn.dataset.action;
     UI.registerControlButton(action, btn);
-    btn.addEventListener("click", () => handleControlAction(action));
+    btn.addEventListener("click", () => {
+      UI.flashControlButton(action);
+      sendControl(action);
+    });
   });
 
+  // ── 键盘盲操 ──────────────────────────────────────────
   document.addEventListener("keydown", (e) => {
+    // 焦点在表单元素上时跳过，避免与复盘下拉框等冲突
+    if (_isFormElement(e.target)) return;
+
     const action = KEY_MAP[e.code];
     if (!action) return;
+
     e.preventDefault();
     if (e.repeat) return;
-    handleControlAction(action);
+
+    _pressedKeys.add(e.code);
+    UI.setKeyActive(action, true);
+    sendControl(action);
+  });
+
+  document.addEventListener("keyup", (e) => {
+    if (!_pressedKeys.has(e.code)) return;
+    _pressedKeys.delete(e.code);
+
+    const action = KEY_MAP[e.code];
+    if (action) UI.setKeyActive(action, false);
+  });
+
+  // 窗口失焦时清理所有按键状态，防止按钮"卡住"
+  window.addEventListener("blur", () => {
+    for (const code of _pressedKeys) {
+      const action = KEY_MAP[code];
+      if (action) UI.setKeyActive(action, false);
+    }
+    _pressedKeys.clear();
   });
 }
 

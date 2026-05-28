@@ -137,6 +137,36 @@ class BlackBoxLogger:
                             writer.writerow(row)
                     print(f"✅ 成功导出 {len(rows)} 条数据到 {filename}")
 
+    async def export_telemetry_rows(self, run_id: int):
+        """
+        流式异步生成器：逐行 yield 遥测数据，供 StreamingResponse 使用。
+        不会一次性将所有行加载到内存，适合数万条高频数据场景。
+        """
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """
+                SELECT
+                    timestamp_us,
+                    run_mode,
+                    chassis_speed_mps,
+                    chassis_steer_angle_deg,
+                    imu_yaw,
+                    imu_pitch,
+                    imu_roll,
+                    imu_gyro_z_rads,
+                    lidar_front_m,
+                    lidar_left_m,
+                    lidar_right_m
+                FROM telemetry
+                WHERE run_id = ?
+                ORDER BY timestamp_us ASC
+                """,
+                (run_id,),
+            ) as cursor:
+                async for row in cursor:
+                    yield row
+
     async def get_all_runs(self) -> list[dict]:
         """查询所有实验批次，按 run_id 倒序（最新在前）。"""
         async with aiosqlite.connect(DB_PATH) as db:
