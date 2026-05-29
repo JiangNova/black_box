@@ -163,6 +163,12 @@ const UI = {
     const el = document.getElementById("controlMask");
     if (el) el.classList.toggle("visible", masked);
   },
+
+  setAebAlert(active) {
+    document.body.classList.toggle("aeb-alert", active);
+    const banner = document.getElementById("aebBanner");
+    if (banner) banner.classList.toggle("visible", active);
+  },
 };
 
 /* ═══════════════════════════════════════════════════════════
@@ -230,6 +236,7 @@ function onTelemetry(data) {
     Number(data.imu?.gyro_z_rads)
   );
   UI.updateCards(data);
+  UI.setAebAlert(!!data.aeb_active);
   Charts.updateLidarRadar(
     data.perception?.lidar_zones_m?.front,
     data.perception?.lidar_zones_m?.left,

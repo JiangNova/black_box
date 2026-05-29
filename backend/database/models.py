@@ -26,6 +26,7 @@ class PerceptionData(BaseModel):
 class TelemetryData(BaseModel):
     timestamp_us: int
     run_mode: str = "MANUAL"
+    aeb_active: bool = False
     chassis: ChassisData
     imu: ImuData
     perception: PerceptionData

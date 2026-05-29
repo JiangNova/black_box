@@ -126,6 +126,12 @@ async def websocket_endpoint(websocket: WebSocket):
             except json.JSONDecodeError:
                 continue
 
+            if msg.get("type") == "mode_switch":
+                target = msg.get("target")
+                if target in ("MANUAL", "SEMI_AUTO", "AUTO"):
+                    await mqtt_bridge.publish_mode_cmd(target)
+                continue
+
             if msg.get("type") != "control":
                 continue
 

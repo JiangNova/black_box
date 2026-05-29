@@ -14,6 +14,7 @@ DEFAULT_BROKER = "127.0.0.1"
 DEFAULT_PORT = 1883
 TOPIC_TELEMETRY = "vehicle/telemetry"
 TOPIC_CONTROL = "vehicle/control_cmd"
+TOPIC_MODE_CMD = "vehicle/mode_cmd"
 CONNECT_TIMEOUT_S = 15.0
 
 
@@ -108,6 +109,15 @@ class MQTTBridge:
             data_dict.get("run_mode"),
             data_dict.get("chassis", {}).get("speed_mps", 0.0),
         )
+
+    async def publish_mode_cmd(self, mode: str) -> None:
+        if self._client is None:
+            logger.error("Cannot publish mode command; MQTT client is not connected")
+            return
+
+        body = json.dumps({"type": "mode_switch", "target": mode})
+        await self._client.publish(TOPIC_MODE_CMD, body)
+        logger.info("Published mode command to %s: %s", TOPIC_MODE_CMD, mode)
 
     async def publish_control_cmd(self, payload: dict) -> None:
         if self._client is None:
