@@ -109,7 +109,7 @@ class ParsedFrame:
                 "steer_angle_deg": 0.0,
             },
             "lidar": {
-                "front_m": 5.0,
+                "front_m": 0.0,
                 "lidar_360": [],
             },
             "vision": {

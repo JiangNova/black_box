@@ -24,7 +24,7 @@ class ChassisState(BaseModel):
 
 class LidarState(BaseModel):
     """激光雷达层：前向避障距离 + 360° 极坐标点云 (BEV)。"""
-    front_m: float = 5.0
+    front_m: float = 0.0
     lidar_360: list = Field(default_factory=list)
 
 
