@@ -1,5 +1,6 @@
 import aiosqlite
 import csv
+import json
 import os
 from datetime import datetime
 
@@ -22,9 +23,15 @@ TELEMETRY_DDL = """
         chassis_roll REAL,
         chassis_aeb_active INTEGER,
         lidar_front_m REAL,
+<<<<<<< HEAD
         vision_has_obstacle INTEGER,
         vision_obstacle_label TEXT,
         vision_distance_m REAL,
+=======
+        lidar_left_m REAL,
+        lidar_right_m REAL,
+        lidar_360_json TEXT,
+>>>>>>> 214b8b9faf04ac6ebbd8e98ba2d80f1c260be076
         receive_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(run_id) REFERENCES runs(id)
     )
@@ -55,10 +62,21 @@ class BlackBoxLogger:
             if exists:
                 info = await db.execute("PRAGMA table_info(telemetry)")
                 columns = {row[1] for row in await info.fetchall()}
+<<<<<<< HEAD
                 # 检测旧版表结构（以旧字段 timestamp_us 为特征）
                 if "timestamp_us" in columns or "timestamp" not in columns:
+=======
+                if "timestamp_us" not in columns:
+                    # 旧版表结构完全不同 → 整体重建
+>>>>>>> 214b8b9faf04ac6ebbd8e98ba2d80f1c260be076
                     await db.execute("ALTER TABLE telemetry RENAME TO telemetry_legacy")
                     await db.execute(TELEMETRY_DDL)
+                elif "lidar_360_json" not in columns:
+                    # 新版表缺少 lidar_360_json 列 → 增量迁移
+                    await db.execute(
+                        "ALTER TABLE telemetry ADD COLUMN lidar_360_json TEXT"
+                    )
+                    print("📦 数据库迁移: 已添加 lidar_360_json 列")
             else:
                 await db.execute(TELEMETRY_DDL)
 
@@ -89,6 +107,13 @@ class BlackBoxLogger:
         else:
             telemetry = data
 
+        # lidar_360 序列化为 JSON 字符串存入单列
+        lidar_360 = getattr(telemetry.perception, "lidar_360", None)
+        if lidar_360 is not None and isinstance(lidar_360, list):
+            lidar_360_json = json.dumps(lidar_360, separators=(",", ":"))
+        else:
+            lidar_360_json = json.dumps([])
+
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute(
                 """
@@ -104,10 +129,17 @@ class BlackBoxLogger:
                     chassis_roll,
                     chassis_aeb_active,
                     lidar_front_m,
+<<<<<<< HEAD
                     vision_has_obstacle,
                     vision_obstacle_label,
                     vision_distance_m
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+=======
+                    lidar_left_m,
+                    lidar_right_m,
+                    lidar_360_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+>>>>>>> 214b8b9faf04ac6ebbd8e98ba2d80f1c260be076
                 """,
                 (
                     self.current_run_id,
@@ -115,6 +147,7 @@ class BlackBoxLogger:
                     telemetry.chassis.run_mode,
                     telemetry.chassis.speed_mps,
                     telemetry.chassis.steer_angle_deg,
+<<<<<<< HEAD
                     telemetry.chassis.gyro_z_rads,
                     telemetry.chassis.yaw,
                     telemetry.chassis.pitch,
@@ -124,6 +157,16 @@ class BlackBoxLogger:
                     int(telemetry.vision.has_obstacle),
                     telemetry.vision.obstacle_label,
                     telemetry.vision.distance_m,
+=======
+                    telemetry.imu.yaw,
+                    telemetry.imu.pitch,
+                    telemetry.imu.roll,
+                    telemetry.imu.gyro_z_rads,
+                    telemetry.perception.lidar_zones_m.front,
+                    telemetry.perception.lidar_zones_m.left,
+                    telemetry.perception.lidar_zones_m.right,
+                    lidar_360_json,
+>>>>>>> 214b8b9faf04ac6ebbd8e98ba2d80f1c260be076
                 ),
             )
             await db.commit()
@@ -164,9 +207,15 @@ class BlackBoxLogger:
                     chassis_roll,
                     chassis_aeb_active,
                     lidar_front_m,
+<<<<<<< HEAD
                     vision_has_obstacle,
                     vision_obstacle_label,
                     vision_distance_m
+=======
+                    lidar_left_m,
+                    lidar_right_m,
+                    lidar_360_json
+>>>>>>> 214b8b9faf04ac6ebbd8e98ba2d80f1c260be076
                 FROM telemetry
                 WHERE run_id = ?
                 ORDER BY timestamp ASC
@@ -175,6 +224,72 @@ class BlackBoxLogger:
             ) as cursor:
                 async for row in cursor:
                     yield row
+
+    def _row_to_telemetry_frame(self, row) -> dict:
+        """
+        将扁平 SQLite 行转换为与 MQTT 实时帧完全一致的嵌套结构，
+        供回放推流使用，前端无需区分实时/回放数据格式。
+        """
+        lidar_360_raw = row["lidar_360_json"] if "lidar_360_json" in row.keys() else None
+        try:
+            lidar_360 = json.loads(lidar_360_raw) if lidar_360_raw else []
+        except (json.JSONDecodeError, TypeError):
+            lidar_360 = []
+
+        return {
+            "timestamp_us": row["timestamp_us"],
+            "run_mode": row["run_mode"],
+            "aeb_active": False,
+            "chassis": {
+                "speed_mps": row["chassis_speed_mps"],
+                "steer_angle_deg": row["chassis_steer_angle_deg"],
+            },
+            "imu": {
+                "yaw": row["imu_yaw"],
+                "pitch": row["imu_pitch"],
+                "roll": row["imu_roll"],
+                "gyro_z_rads": row["imu_gyro_z_rads"],
+            },
+            "perception": {
+                "lidar_zones_m": {
+                    "front": row["lidar_front_m"],
+                    "left": row["lidar_left_m"],
+                    "right": row["lidar_right_m"],
+                },
+                "lidar_360": lidar_360,
+            },
+        }
+
+    async def get_replay_frames(self, run_id: int):
+        """
+        异步生成器：逐帧 yield 嵌套格式的遥测帧，用于 WebSocket 回放推流。
+        每帧格式与 MQTT 实时 broadcast 完全一致。
+        """
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """
+                SELECT
+                    timestamp_us,
+                    run_mode,
+                    chassis_speed_mps,
+                    chassis_steer_angle_deg,
+                    imu_yaw,
+                    imu_pitch,
+                    imu_roll,
+                    imu_gyro_z_rads,
+                    lidar_front_m,
+                    lidar_left_m,
+                    lidar_right_m,
+                    lidar_360_json
+                FROM telemetry
+                WHERE run_id = ?
+                ORDER BY timestamp_us ASC
+                """,
+                (run_id,),
+            ) as cursor:
+                async for row in cursor:
+                    yield self._row_to_telemetry_frame(row)
 
     async def get_all_runs(self) -> list[dict]:
         """查询所有实验批次，按 run_id 倒序（最新在前）。"""
@@ -236,9 +351,15 @@ class BlackBoxLogger:
                     chassis_roll,
                     chassis_aeb_active,
                     lidar_front_m,
+<<<<<<< HEAD
                     vision_has_obstacle,
                     vision_obstacle_label,
                     vision_distance_m
+=======
+                    lidar_left_m,
+                    lidar_right_m,
+                    lidar_360_json
+>>>>>>> 214b8b9faf04ac6ebbd8e98ba2d80f1c260be076
                 FROM telemetry
                 WHERE run_id = ?
                 ORDER BY timestamp ASC
@@ -260,9 +381,15 @@ class BlackBoxLogger:
             "imu_roll": [],
             "aeb_active": [],
             "lidar_front_m": [],
+<<<<<<< HEAD
             "vision_has_obstacle": [],
             "vision_obstacle_label": [],
             "vision_distance_m": [],
+=======
+            "lidar_left_m": [],
+            "lidar_right_m": [],
+            "lidar_360": [],
+>>>>>>> 214b8b9faf04ac6ebbd8e98ba2d80f1c260be076
         }
 
         for row in rows:
@@ -276,9 +403,20 @@ class BlackBoxLogger:
             columnar["imu_roll"].append(row["chassis_roll"])
             columnar["aeb_active"].append(bool(row["chassis_aeb_active"]))
             columnar["lidar_front_m"].append(row["lidar_front_m"])
+<<<<<<< HEAD
             columnar["vision_has_obstacle"].append(bool(row["vision_has_obstacle"]))
             columnar["vision_obstacle_label"].append(row["vision_obstacle_label"])
             columnar["vision_distance_m"].append(row["vision_distance_m"])
+=======
+            columnar["lidar_left_m"].append(row["lidar_left_m"])
+            columnar["lidar_right_m"].append(row["lidar_right_m"])
+            # 反序列化 lidar_360 点云
+            lidar_raw = row["lidar_360_json"]
+            try:
+                columnar["lidar_360"].append(json.loads(lidar_raw) if lidar_raw else [])
+            except (json.JSONDecodeError, TypeError):
+                columnar["lidar_360"].append([])
+>>>>>>> 214b8b9faf04ac6ebbd8e98ba2d80f1c260be076
 
         return columnar
 
