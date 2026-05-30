@@ -78,8 +78,8 @@ const UI = {
 
   updateCards(data) {
     const speed = data.chassis?.speed_mps;
-    const lidarFront = data.perception?.lidar_zones_m?.front;
-    const runMode = data.run_mode;
+    const lidarFront = data.lidar?.front_m;
+    const runMode = data.chassis?.run_mode;
 
     this.cards.steer.textContent =
       speed != null ? `${Number(speed).toFixed(3)} m/s` : "—";
@@ -89,7 +89,7 @@ const UI = {
     const mode = runMode ?? "MANUAL";
     if (mode !== _currentMode) _applyMode(mode);
 
-    this.updateEuler(data.imu);
+    this.updateEuler(data.chassis);
   },
 
   updateFromColumnar(columnar) {
@@ -195,7 +195,7 @@ function connect() {
 
     try {
       const data = JSON.parse(ev.data);
-      if (data.timestamp_us == null) return;
+      if (data.timestamp == null) return;
       onTelemetry(data);
     } catch {
       console.warn("无效 JSON:", ev.data);
@@ -231,17 +231,18 @@ function sendControl(action) {
 function onTelemetry(data) {
   // 数据缓冲区始终更新，保证解除暂停后图表能立即追上最新数据
   Charts.pushLivePoint(
-    data.timestamp_us,
+    data.timestamp,
     Number(data.chassis?.speed_mps),
-    Number(data.imu?.gyro_z_rads)
+    Number(data.chassis?.gyro_z_rads)
   );
 
   // 画布暂停：底层数据仍在流转，但冻结所有 setOption 重绘
   if (isPaused) return;
 
   UI.updateCards(data);
-  UI.setAebAlert(!!data.aeb_active);
-  Charts.updateLidarPolar(data.perception?.lidar_360);
+  UI.setAebAlert(!!data.chassis?.aeb_active);
+  const lidarData = data.lidar?.lidar_360;
+  Charts.updateLidarPolar(lidarData);
   Charts.refreshLive();
 }
 
@@ -473,7 +474,7 @@ const Charts = {
           },
         ],
       },
-      { notMerge: false, lazyUpdate: false }
+      false, false
     );
   },
 

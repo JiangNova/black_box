@@ -66,17 +66,19 @@ async def get_run_telemetry(run_id: int):
 
 
 CSV_HEADER = [
-    "timestamp_us",
+    "timestamp",
     "run_mode",
     "chassis_speed_mps",
     "chassis_steer_angle_deg",
-    "imu_yaw",
-    "imu_pitch",
-    "imu_roll",
-    "imu_gyro_z_rads",
+    "chassis_gyro_z_rads",
+    "chassis_yaw",
+    "chassis_pitch",
+    "chassis_roll",
+    "chassis_aeb_active",
     "lidar_front_m",
-    "lidar_left_m",
-    "lidar_right_m",
+    "vision_has_obstacle",
+    "vision_obstacle_label",
+    "vision_distance_m",
 ]
 
 

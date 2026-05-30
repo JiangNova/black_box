@@ -7,6 +7,9 @@ mock_hardware_proxy.py
 AEB 触发条件：处于 SEMI_AUTO 或 AUTO 模式，且前向雷达 ≤ 0.20m。
 AEB 解除条件：切回 MANUAL（人类最高接管权）或前向雷达恢复至 > 0.50m。
 
+v2.0 · Tri-Channel 三通道嵌套格式：
+  { chassis: {...}, lidar: {...}, vision: {...}, timestamp: ... }
+
 用法:
     python mock_hardware_proxy.py
 """
@@ -53,9 +56,44 @@ current_mode = "MANUAL"
 # AEB 锁死状态（脊髓反射层）
 aeb_active = False
 
+# ── Vision 假数据状态机 ──────────────────────────────────
+_vision_label_pool = ["", "box", "person", "cone", "barrier"]
+_vision_timer = 0.0
+
+
+def _generate_vision(t: float, front_m: float) -> dict:
+    """模拟 OAK-D 视觉识别：每隔约 3 秒随机出现目标，持续约 2 秒。"""
+    global _vision_timer
+
+    period = 3.0 + 0.5 * math.sin(t * 0.3)
+    cycle_pos = (t % period) / period
+
+    if cycle_pos < 0.6:
+        # 空闲期：无目标
+        return {
+            "has_obstacle": False,
+            "obstacle_label": "",
+            "distance_m": 0.0,
+        }
+
+    # 激活期：随机选一个标签，距离与雷达前向测距联动（加少许噪声）
+    label = _vision_label_pool[random.randint(1, len(_vision_label_pool) - 1)]
+    dist = max(0.2, front_m + random.uniform(-0.3, 0.3))
+    return {
+        "has_obstacle": True,
+        "obstacle_label": label,
+        "distance_m": round(dist, 2),
+    }
+
 
 def build_telemetry_frame(t0: float) -> dict:
-    """简易状态机物理引擎：急停 / AEB 锁死时运动学量强制归零。"""
+    """
+    简易状态机物理引擎：急停 / AEB 锁死时运动学量强制归零。
+
+    Returns
+    -------
+    dict  三通道嵌套遥测帧 (TelemetryFrame 格式)
+    """
     global aeb_active
 
     t = time.monotonic() - t0
@@ -64,16 +102,12 @@ def build_telemetry_frame(t0: float) -> dict:
         speed_mps = 0.0
         gyro_z_rads = 0.0
         front_m = 5.0
-        left_m = 5.0
-        right_m = 5.0
         run_mode = "ESTOP"
         aeb_active = False
     else:
         # ── 原始物理计算 ──────────────────────────────────
         raw_speed = 1.25 + 0.75 * math.sin(t * 0.8)
         gyro_z_rads = 0.15 * math.sin(t * 1.5)
-        left_m = 1.8 + 0.6 * math.cos(t * 0.7)
-        right_m = 1.8 + 0.6 * math.sin(t * 0.9)
 
         if current_mode == "MANUAL":
             front_m = max(0.35, 4.2 - raw_speed * 1.4 + 0.25 * math.sin(t * 1.1))
@@ -109,36 +143,36 @@ def build_telemetry_frame(t0: float) -> dict:
         run_mode = current_mode
 
     # ── 360° 激光雷达极坐标点云 (BEV) ─────────────────
+    # 关键：以帧计数器 t 为相位驱动源，配合 sin 波动 + 高斯噪声，
+    # 确保每一帧的 360 个散点都有微观位移，前端 ECharts 才能高频重绘。
     lidar_360 = []
-    now = time.time()
     for i in range(360):
-        shape_wave = 0.5 * math.sin(now + i / 20.0)
+        shape_wave = 0.5 * math.sin(t * 2.0 + i / 20.0)
         noise = random.uniform(-0.1, 0.1)
         radius = max(0.15, round(2.0 + shape_wave + noise, 2))
         lidar_360.append([i, radius])
 
+    # ── OAK-D 视觉假数据 ──────────────────────────────
+    vision = _generate_vision(t, front_m)
+
+    # ── 三通道嵌套组装 ─────────────────────────────────
     return {
-        "timestamp_us": time.time_ns() // 1_000,
-        "run_mode": run_mode,
-        "aeb_active": aeb_active,
         "chassis": {
             "speed_mps": round(speed_mps, 3),
-            "steer_angle_deg": 0.0,
-        },
-        "imu": {
+            "gyro_z_rads": round(gyro_z_rads, 4),
             "yaw": 0.0,
             "pitch": 0.0,
             "roll": 0.0,
-            "gyro_z_rads": round(gyro_z_rads, 4),
+            "run_mode": run_mode,
+            "aeb_active": aeb_active,
+            "steer_angle_deg": 0.0,
         },
-        "perception": {
-            "lidar_zones_m": {
-                "front": round(front_m, 2),
-                "left": round(left_m, 2),
-                "right": round(right_m, 2),
-            },
+        "lidar": {
+            "front_m": round(front_m, 2),
             "lidar_360": lidar_360,
         },
+        "vision": vision,
+        "timestamp": time.time_ns() // 1_000,
     }
 
 
@@ -161,25 +195,29 @@ async def upstream_worker(client: Client) -> None:
         frame_count += 1
 
         chassis = frame["chassis"]
-        imu = frame["imu"]
-        lidar = frame["perception"]["lidar_zones_m"]
+        lidar = frame["lidar"]
+        vision = frame["vision"]
         tags = []
         if estop_event.is_set():
             tags.append("ESTOP")
-        if frame["aeb_active"]:
+        if chassis["aeb_active"]:
             tags.append("AEB")
         tag_str = f" [{'|'.join(tags)}]" if tags else ""
+        vision_str = ""
+        if vision["has_obstacle"]:
+            vision_str = (
+                f" | vision: {vision['obstacle_label']} @ {vision['distance_m']}m"
+            )
         logger.info(
             "TX #%d%s | mode=%s speed=%.3f m/s | gyro_z=%.4f rad/s | "
-            "lidar front/left/right=%.2f/%.2f/%.2f m",
+            "lidar front=%.2f m%s",
             frame_count,
             tag_str,
-            frame["run_mode"],
+            chassis["run_mode"],
             chassis["speed_mps"],
-            imu["gyro_z_rads"],
-            lidar["front"],
-            lidar["left"],
-            lidar["right"],
+            chassis["gyro_z_rads"],
+            lidar["front_m"],
+            vision_str,
         )
 
         next_tick += INTERVAL_S

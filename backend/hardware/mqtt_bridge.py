@@ -105,8 +105,8 @@ class MQTTBridge:
         await manager.broadcast(data_dict)
         logger.debug(
             "Telemetry processed ts=%s run_mode=%s speed=%.3f",
-            data_dict.get("timestamp_us"),
-            data_dict.get("run_mode"),
+            data_dict.get("timestamp"),
+            data_dict.get("chassis", {}).get("run_mode"),
             data_dict.get("chassis", {}).get("speed_mps", 0.0),
         )
 

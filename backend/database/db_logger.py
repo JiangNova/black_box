@@ -3,7 +3,7 @@ import csv
 import os
 from datetime import datetime
 
-from database.models import TelemetryData
+from database.models import TelemetryFrame
 
 DB_DIR = "data"
 DB_PATH = os.path.join(DB_DIR, "black_box.db")
@@ -12,17 +12,19 @@ TELEMETRY_DDL = """
     CREATE TABLE IF NOT EXISTS telemetry (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         run_id INTEGER NOT NULL,
-        timestamp_us INTEGER NOT NULL,
+        timestamp INTEGER NOT NULL,
         run_mode TEXT NOT NULL,
         chassis_speed_mps REAL,
         chassis_steer_angle_deg REAL,
-        imu_yaw REAL,
-        imu_pitch REAL,
-        imu_roll REAL,
-        imu_gyro_z_rads REAL,
+        chassis_gyro_z_rads REAL,
+        chassis_yaw REAL,
+        chassis_pitch REAL,
+        chassis_roll REAL,
+        chassis_aeb_active INTEGER,
         lidar_front_m REAL,
-        lidar_left_m REAL,
-        lidar_right_m REAL,
+        vision_has_obstacle INTEGER,
+        vision_obstacle_label TEXT,
+        vision_distance_m REAL,
         receive_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(run_id) REFERENCES runs(id)
     )
@@ -53,7 +55,8 @@ class BlackBoxLogger:
             if exists:
                 info = await db.execute("PRAGMA table_info(telemetry)")
                 columns = {row[1] for row in await info.fetchall()}
-                if "timestamp_us" not in columns:
+                # 检测旧版表结构（以旧字段 timestamp_us 为特征）
+                if "timestamp_us" in columns or "timestamp" not in columns:
                     await db.execute("ALTER TABLE telemetry RENAME TO telemetry_legacy")
                     await db.execute(TELEMETRY_DDL)
             else:
@@ -76,13 +79,13 @@ class BlackBoxLogger:
     async def log_data(self, data_dict: dict):
         await self.insert_telemetry(data_dict)
 
-    async def insert_telemetry(self, data: TelemetryData | dict):
-        """MQTT 遥测落盘入口：接受嵌套模型或字典，展平写入 SQLite。"""
+    async def insert_telemetry(self, data: TelemetryFrame | dict):
+        """MQTT 遥测落盘入口：接受三通道嵌套模型或字典，展平写入 SQLite。"""
         if self.current_run_id is None:
             return
 
         if isinstance(data, dict):
-            telemetry = TelemetryData.model_validate(data)
+            telemetry = TelemetryFrame.model_validate(data)
         else:
             telemetry = data
 
@@ -91,32 +94,36 @@ class BlackBoxLogger:
                 """
                 INSERT INTO telemetry (
                     run_id,
-                    timestamp_us,
+                    timestamp,
                     run_mode,
                     chassis_speed_mps,
                     chassis_steer_angle_deg,
-                    imu_yaw,
-                    imu_pitch,
-                    imu_roll,
-                    imu_gyro_z_rads,
+                    chassis_gyro_z_rads,
+                    chassis_yaw,
+                    chassis_pitch,
+                    chassis_roll,
+                    chassis_aeb_active,
                     lidar_front_m,
-                    lidar_left_m,
-                    lidar_right_m
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    vision_has_obstacle,
+                    vision_obstacle_label,
+                    vision_distance_m
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     self.current_run_id,
-                    telemetry.timestamp_us,
-                    telemetry.run_mode,
+                    telemetry.timestamp,
+                    telemetry.chassis.run_mode,
                     telemetry.chassis.speed_mps,
                     telemetry.chassis.steer_angle_deg,
-                    telemetry.imu.yaw,
-                    telemetry.imu.pitch,
-                    telemetry.imu.roll,
-                    telemetry.imu.gyro_z_rads,
-                    telemetry.perception.lidar_zones_m.front,
-                    telemetry.perception.lidar_zones_m.left,
-                    telemetry.perception.lidar_zones_m.right,
+                    telemetry.chassis.gyro_z_rads,
+                    telemetry.chassis.yaw,
+                    telemetry.chassis.pitch,
+                    telemetry.chassis.roll,
+                    int(telemetry.chassis.aeb_active),
+                    telemetry.lidar.front_m,
+                    int(telemetry.vision.has_obstacle),
+                    telemetry.vision.obstacle_label,
+                    telemetry.vision.distance_m,
                 ),
             )
             await db.commit()
@@ -147,20 +154,22 @@ class BlackBoxLogger:
             async with db.execute(
                 """
                 SELECT
-                    timestamp_us,
+                    timestamp,
                     run_mode,
                     chassis_speed_mps,
                     chassis_steer_angle_deg,
-                    imu_yaw,
-                    imu_pitch,
-                    imu_roll,
-                    imu_gyro_z_rads,
+                    chassis_gyro_z_rads,
+                    chassis_yaw,
+                    chassis_pitch,
+                    chassis_roll,
+                    chassis_aeb_active,
                     lidar_front_m,
-                    lidar_left_m,
-                    lidar_right_m
+                    vision_has_obstacle,
+                    vision_obstacle_label,
+                    vision_distance_m
                 FROM telemetry
                 WHERE run_id = ?
-                ORDER BY timestamp_us ASC
+                ORDER BY timestamp ASC
                 """,
                 (run_id,),
             ) as cursor:
@@ -181,7 +190,7 @@ class BlackBoxLogger:
                         SELECT t.run_mode
                         FROM telemetry t
                         WHERE t.run_id = r.id
-                        ORDER BY t.timestamp_us ASC
+                        ORDER BY t.timestamp ASC
                         LIMIT 1
                     ) AS run_mode,
                     (
@@ -217,20 +226,22 @@ class BlackBoxLogger:
             async with db.execute(
                 """
                 SELECT
-                    timestamp_us,
+                    timestamp,
                     run_mode,
                     chassis_speed_mps,
                     chassis_steer_angle_deg,
-                    imu_yaw,
-                    imu_pitch,
-                    imu_roll,
-                    imu_gyro_z_rads,
+                    chassis_gyro_z_rads,
+                    chassis_yaw,
+                    chassis_pitch,
+                    chassis_roll,
+                    chassis_aeb_active,
                     lidar_front_m,
-                    lidar_left_m,
-                    lidar_right_m
+                    vision_has_obstacle,
+                    vision_obstacle_label,
+                    vision_distance_m
                 FROM telemetry
                 WHERE run_id = ?
-                ORDER BY timestamp_us ASC
+                ORDER BY timestamp ASC
                 """,
                 (run_id,),
             ) as cursor:
@@ -243,27 +254,31 @@ class BlackBoxLogger:
             "run_modes": [],
             "speed_mps": [],
             "steer_angle_deg": [],
+            "gyro_z_rads": [],
             "imu_yaw": [],
             "imu_pitch": [],
             "imu_roll": [],
-            "gyro_z_rads": [],
+            "aeb_active": [],
             "lidar_front_m": [],
-            "lidar_left_m": [],
-            "lidar_right_m": [],
+            "vision_has_obstacle": [],
+            "vision_obstacle_label": [],
+            "vision_distance_m": [],
         }
 
         for row in rows:
-            columnar["timestamps"].append(row["timestamp_us"])
+            columnar["timestamps"].append(row["timestamp"])
             columnar["run_modes"].append(row["run_mode"])
             columnar["speed_mps"].append(row["chassis_speed_mps"])
             columnar["steer_angle_deg"].append(row["chassis_steer_angle_deg"])
-            columnar["imu_yaw"].append(row["imu_yaw"])
-            columnar["imu_pitch"].append(row["imu_pitch"])
-            columnar["imu_roll"].append(row["imu_roll"])
-            columnar["gyro_z_rads"].append(row["imu_gyro_z_rads"])
+            columnar["gyro_z_rads"].append(row["chassis_gyro_z_rads"])
+            columnar["imu_yaw"].append(row["chassis_yaw"])
+            columnar["imu_pitch"].append(row["chassis_pitch"])
+            columnar["imu_roll"].append(row["chassis_roll"])
+            columnar["aeb_active"].append(bool(row["chassis_aeb_active"]))
             columnar["lidar_front_m"].append(row["lidar_front_m"])
-            columnar["lidar_left_m"].append(row["lidar_left_m"])
-            columnar["lidar_right_m"].append(row["lidar_right_m"])
+            columnar["vision_has_obstacle"].append(bool(row["vision_has_obstacle"]))
+            columnar["vision_obstacle_label"].append(row["vision_obstacle_label"])
+            columnar["vision_distance_m"].append(row["vision_distance_m"])
 
         return columnar
 
