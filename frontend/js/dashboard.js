@@ -4,15 +4,17 @@
  *   1. UI 结构层
  *   2. WebSocket 通信层
  *   3. ECharts 渲染层
- *   4. 历史复盘层
+ *   4. 历史复盘层（WebSocket 推流回放引擎）
  */
 const MAX_LIVE_POINTS = 50;
+const MAX_REPLAY_POINTS = 50000;  // 回放期间缓冲区上限（足够容纳 ~40 分钟 20Hz 数据）
 const WS_URL = "ws://127.0.0.1:8000/ws";
 const RECONNECT_MS = 2000;
 
 /* ── 运行模式状态 ──────────────────────────────────── */
 let _currentMode = "MANUAL";
 let isPaused = false;
+let _chartMaxPoints = MAX_LIVE_POINTS;  // 动态上限：实时 50 / 回放 50000
 
 function _applyMode(mode) {
   if (_currentMode === mode) return;
@@ -54,6 +56,11 @@ const UI = {
     select: document.getElementById("replaySelect"),
     status: document.getElementById("replayStatus"),
     exportBtn: document.getElementById("exportBtn"),
+  },
+  pause: {
+    btn: document.getElementById("pauseToggle"),
+    dot: document.getElementById("pauseDot"),
+    label: document.getElementById("pauseLabel"),
   },
   controlButtons: {},
 
@@ -115,9 +122,11 @@ const UI = {
 
     if (state === "online") {
       dot.classList.add("online");
-      label.textContent = Replay.enabled
-        ? "已连接 · 复盘模式中"
-        : "已连接 · 实时接收";
+      label.textContent = Replay.active
+        ? "已连接 · 回放推流中"
+        : Replay.enabled
+          ? "已连接 · 复盘就绪"
+          : "已连接 · 实时接收";
     } else if (state === "connecting") {
       dot.classList.add("connecting");
       label.textContent = "连接中…";
@@ -132,6 +141,37 @@ const UI = {
     this.replay.status.classList.toggle("visible", active);
   },
 
+  // ── 画布暂停 / 回放态 ──────────────────────────────
+
+  setPauseUI(paused) {
+    if (paused) {
+      this.pause.btn.classList.add("paused");
+      this.pause.dot.classList.add("paused");
+      this.pause.label.textContent = "画布渲染：已暂停";
+    } else {
+      this.pause.btn.classList.remove("paused");
+      this.pause.dot.classList.remove("paused");
+      this.pause.label.textContent = "画布渲染：实时";
+    }
+  },
+
+  setReplayPlayingUI(active) {
+    if (active) {
+      this.pause.btn.classList.add("paused");
+      this.pause.dot.classList.add("paused");
+      this.pause.label.textContent = "正在回放...";
+      // 回放期间 pause 按钮不可点击
+      this.pause.btn.style.pointerEvents = "none";
+    } else {
+      this.pause.btn.classList.remove("paused");
+      this.pause.dot.classList.remove("paused");
+      this.pause.btn.style.pointerEvents = "";
+      this.pause.label.textContent = isPaused
+        ? "画布渲染：已暂停"
+        : "画布渲染：实时";
+    }
+  },
+
   flashControlButton(action) {
     const btn = this.controlButtons[action];
     if (!btn) return;
@@ -140,7 +180,6 @@ const UI = {
     btn._flashTimer = setTimeout(() => btn.classList.remove("active"), 200);
   },
 
-  // 键盘按下/抬起专用：保持 active 直到 keyup，避免与 flash timeout 冲突
   setKeyActive(action, active) {
     const btn = this.controlButtons[action];
     if (!btn) return;
@@ -191,12 +230,25 @@ function connect() {
   };
 
   ws.onmessage = (ev) => {
-    if (Replay.enabled) return;
-
     try {
       const data = JSON.parse(ev.data);
-      if (data.timestamp_us == null) return;
-      onTelemetry(data);
+
+      // ── 回放控制信令 ──────────────────────────────
+      if (data.type != null && data.timestamp_us == null) {
+        handleReplaySignal(data);
+        return;
+      }
+
+      // ── 遥测帧（实时或回放，格式完全一致）─────────
+      if (data.timestamp_us != null) {
+        // 实时模式下，复盘 checkbox 未勾选 → 正常渲染
+        // 回放模式下，Replay.active → 正常渲染
+        // 复盘模式但未激活 → 过渡态，跳过（防止混杂数据）
+        if (Replay.active || !Replay.enabled) {
+          onTelemetry(data);
+        }
+        return;
+      }
     } catch {
       console.warn("无效 JSON:", ev.data);
     }
@@ -210,6 +262,26 @@ function connect() {
   ws.onerror = () => {
     UI.setConnState("offline");
   };
+}
+
+function handleReplaySignal(data) {
+  switch (data.type) {
+    case "replay_started":
+      Replay._onStarted(data);
+      break;
+    case "replay_complete":
+      Replay._onComplete(data);
+      break;
+    case "replay_stopped":
+      Replay._onStopped();
+      break;
+    case "replay_error":
+      console.error("回放错误:", data.message);
+      Replay._onStopped();
+      break;
+    default:
+      break;
+  }
 }
 
 function scheduleReconnect() {
@@ -229,14 +301,14 @@ function sendControl(action) {
 }
 
 function onTelemetry(data) {
-  // 数据缓冲区始终更新，保证解除暂停后图表能立即追上最新数据
+  // 数据缓冲区始终更新
   Charts.pushLivePoint(
     data.timestamp_us,
     Number(data.chassis?.speed_mps),
     Number(data.imu?.gyro_z_rads)
   );
 
-  // 画布暂停：底层数据仍在流转，但冻结所有 setOption 重绘
+  // 画布暂停：底层数据仍在流转，但冻结 setOption 重绘
   if (isPaused) return;
 
   UI.updateCards(data);
@@ -482,7 +554,8 @@ const Charts = {
     this.speedData.push(speedMps);
     this.gyroData.push(gyroZRads);
 
-    if (this.labels.length > MAX_LIVE_POINTS) {
+    // 按当前动态上限裁剪缓冲区
+    while (this.labels.length > _chartMaxPoints) {
       this.labels.shift();
       this.speedData.shift();
       this.gyroData.shift();
@@ -500,6 +573,60 @@ const Charts = {
       xAxis: { data: this.labels },
       series: [{ data: this.gyroData }],
     });
+  },
+
+  /**
+   * 清空图表缓冲区，为回放推流做好准备。
+   * 保持 live 模式不变，让逐帧推流走 refreshLive 路径。
+   */
+  prepareForReplay() {
+    this.labels = [];
+    this.speedData = [];
+    this.gyroData = [];
+    _chartMaxPoints = MAX_REPLAY_POINTS;
+
+    // 扩展 y 轴范围以适应历史数据可能的波动
+    this.chartSteer.setOption({
+      yAxis: { min: "dataMin", max: "dataMax", scale: true },
+      dataZoom: [],
+    });
+    this.chartGyro.setOption({
+      yAxis: { min: "dataMin", max: "dataMax", scale: true },
+      dataZoom: [],
+    });
+
+    this.updateLidarPolar([]);
+    UI.resetEuler();
+  },
+
+  /**
+   * 回放完成后，冻结数据不再接收新点，添加 dataZoom 供用户探索。
+   */
+  finalizeReplay() {
+    _chartMaxPoints = MAX_REPLAY_POINTS;  // 保持大缓冲
+
+    const replayBottom = 56;
+    const finalizeOption = {
+      grid: { bottom: replayBottom },
+      dataZoom: this.dataZoomConfig(),
+    };
+
+    this.chartSteer.setOption(finalizeOption);
+    this.chartGyro.setOption(finalizeOption);
+  },
+
+  /**
+   * 回放结束回到实时：重置缓冲区上限，恢复实时选项。
+   */
+  restoreLive() {
+    _chartMaxPoints = MAX_LIVE_POINTS;
+    this.labels = [];
+    this.speedData = [];
+    this.gyroData = [];
+    this.applyLiveLineOptions();
+    this.refreshLive();
+    this.updateLidarPolar([]);
+    UI.resetEuler();
   },
 
   loadHistory(columnar) {
@@ -556,13 +683,20 @@ const Charts = {
       ],
     });
 
-    // ── lidar_360 点云在复盘模式下重置为空（不在历史快照中存储 360 点）──
-    this.updateLidarPolar([]);
+    // lidar_360 点云在历史数据中按帧渲染
+    const lastIdx = (columnar.lidar_360?.length ?? 0) - 1;
+    if (lastIdx >= 0) {
+      this.updateLidarPolar(columnar.lidar_360[lastIdx]);
+    } else {
+      this.updateLidarPolar([]);
+    }
 
     UI.updateFromColumnar(columnar);
   },
 
   resetToLive() {
+    this.mode = "live";
+    _chartMaxPoints = MAX_LIVE_POINTS;
     this.labels = [];
     this.speedData = [];
     this.gyroData = [];
@@ -574,34 +708,61 @@ const Charts = {
 };
 
 /* ═══════════════════════════════════════════════════════════
-   4. 历史复盘层
+   4. 历史复盘层（WebSocket 推流回放引擎）
    ═══════════════════════════════════════════════════════════ */
 
 const Replay = {
-  enabled: false,
-  loading: false,
+  enabled: false,       // 复盘 checkbox 是否勾选
+  active: false,        // 是否正在接收回放帧
   _currentRunId: null,
+  _frameCount: 0,
 
   init() {
+    // ── 页面加载时自动拉取会话列表 ────────────────────
+    this.fetchSessions();
+
+    // ── 复盘 checkbox ─────────────────────────────────
     UI.replay.toggle.addEventListener("change", () => {
       this.setEnabled(UI.replay.toggle.checked);
     });
 
+    // ── 下拉菜单 change → 触发 / 停止回放 ────────────
     UI.replay.select.addEventListener("change", () => {
       const runId = UI.replay.select.value;
       if (runId) {
-        this.loadRun(Number(runId));
+        this._requestReplay(Number(runId));
       } else {
-        this._currentRunId = null;
-        UI.replay.exportBtn.disabled = true;
+        this._cancelReplay();
       }
     });
 
-    UI.replay.exportBtn.addEventListener("click", () => {
-      if (this._currentRunId == null) return;
-      window.location.href = `/api/runs/${this._currentRunId}/export`;
+    // ── 导出按钮 ─────────────────────────────────────
+    UI.replay.exportBtn.addEventListener("click", async () => {
+      // ── 复盘模式：导出当前选定批次 ──────────────────
+      if (this._currentRunId != null) {
+        window.location.href = `/api/runs/${this._currentRunId}/export`;
+        return;
+      }
+      // ── 实时模式：自动导出最新批次 ──────────────────
+      try {
+        const res = await fetch("/api/sessions");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const body = await res.json();
+        const sessions = body.sessions ?? [];
+        if (sessions.length === 0) {
+          alert("暂无数据批次可导出，请先采集遥测数据。");
+          return;
+        }
+        const latestId = sessions[0].session_id;
+        window.location.href = `/api/runs/${latestId}/export`;
+      } catch (err) {
+        console.error("导出失败:", err);
+        alert("导出请求失败，请检查后端服务是否正常运行。");
+      }
     });
   },
+
+  // ── 复盘模式开关 ────────────────────────────────────
 
   async setEnabled(on) {
     this.enabled = on;
@@ -609,65 +770,134 @@ const Replay = {
 
     if (on) {
       UI.setConnState(ws?.readyState === WebSocket.OPEN ? "online" : "offline");
-      await this.fetchRuns();
+      // 刷新一次会话列表，确保最新
+      await this.fetchSessions();
     } else {
-      this._currentRunId = null;
-      UI.replay.select.value = "";
-      UI.replay.exportBtn.disabled = true;
-      Charts.resetToLive();
+      // 关闭复盘：若正在回放则停止，恢复实时
+      if (this.active) {
+        this._sendStop();
+      }
+      this._resetState();
+      Charts.restoreLive();
       UI.setConnState(ws?.readyState === WebSocket.OPEN ? "online" : "offline");
     }
   },
 
-  async fetchRuns() {
+  // ── 会话列表 ────────────────────────────────────────
+
+  async fetchSessions() {
     UI.replay.select.innerHTML = '<option value="">— 加载批次列表 —</option>';
     UI.replay.select.disabled = true;
 
     try {
-      const res = await fetch("/api/runs");
+      const res = await fetch("/api/sessions");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const body = await res.json();
-      const runs = body.runs ?? [];
+      const sessions = body.sessions ?? [];
 
       UI.replay.select.innerHTML = '<option value="">— 选择实验批次 —</option>';
-      for (const run of runs) {
+      for (const s of sessions) {
         const opt = document.createElement("option");
-        opt.value = run.run_id;
-        const mode = run.run_mode ?? "—";
-        const count = run.sample_count ?? 0;
-        opt.textContent = `#${run.run_id} · ${run.start_time} · ${mode} · ${count} pts`;
+        opt.value = s.session_id;
+        const mode = s.run_mode ?? "—";
+        const count = s.sample_count ?? 0;
+        opt.textContent = `#${s.session_id} · ${s.start_time} · ${mode} · ${count} pts`;
         UI.replay.select.appendChild(opt);
       }
     } catch (err) {
-      console.error("拉取 runs 失败:", err);
+      console.error("拉取 sessions 失败:", err);
       UI.replay.select.innerHTML = '<option value="">— 加载失败 —</option>';
     } finally {
       UI.replay.select.disabled = !this.enabled;
     }
   },
 
-  async loadRun(runId) {
-    if (this.loading) return;
-    this.loading = true;
+  // ── 回放控制（WebSocket 信令）────────────────────────
 
-    try {
-      const res = await fetch(`/api/runs/${runId}/telemetry`);
-      if (res.status === 404) {
-        console.warn(`Run ${runId} 不存在`);
-        return;
-      }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-      const columnar = await res.json();
-      Charts.loadHistory(columnar);
-      this._currentRunId = runId;
-      UI.replay.exportBtn.disabled = false;
-    } catch (err) {
-      console.error("拉取 telemetry 失败:", err);
-    } finally {
-      this.loading = false;
+  _requestReplay(runId) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      console.warn("WebSocket 未连接，无法发起回放");
+      return;
     }
+
+    // 清空图表缓冲区，准备接收回放帧
+    Charts.prepareForReplay();
+    this._frameCount = 0;
+    this._currentRunId = runId;
+
+    ws.send(JSON.stringify({
+      type: "replay_start",
+      run_id: runId,
+      speed: "1x",
+    }));
+
+    UI.replay.status.textContent = `⏳ 请求回放 #${runId}...`;
+    UI.replay.status.classList.add("visible");
+  },
+
+  _cancelReplay() {
+    this._sendStop();
+    this._resetState();
+
+    if (this.enabled) {
+      // 复盘模式下取消回放：回到就绪态，保留图表数据
+      Charts.finalizeReplay();
+    } else {
+      // 非复盘模式：完全恢复实时
+      Charts.restoreLive();
+    }
+  },
+
+  _sendStop() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "replay_stop" }));
+    }
+  },
+
+  _resetState() {
+    this.active = false;
+    this._currentRunId = null;
+    this._frameCount = 0;
+    UI.replay.status.classList.remove("visible");
+    UI.setReplayPlayingUI(false);
+  },
+
+  // ── 回放信令回调（由 handleReplaySignal 调用）───────
+
+  _onStarted(data) {
+    this.active = true;
+    this._currentRunId = data.run_id;
+    UI.setReplayPlayingUI(true);
+    UI.replay.status.textContent = `⏳ 回放中 · #${data.run_id}`;
+    UI.replay.status.classList.add("visible");
+    UI.setConnState("online");
+    console.log("🚀 回放开始: run_id=%s speed=%s", data.run_id, data.speed);
+  },
+
+  _onComplete(data) {
+    this.active = false;
+    this._frameCount = data.total_frames ?? 0;
+    UI.setReplayPlayingUI(false);
+    UI.replay.status.textContent = `✅ 回放完毕 · ${this._frameCount} 帧`;
+    UI.replay.status.classList.add("visible");
+    UI.setConnState("online");
+
+    // 添加 dataZoom，方便用户探索历史数据
+    Charts.finalizeReplay();
+    console.log("✅ 回放完成: %s 帧", this._frameCount);
+  },
+
+  _onStopped() {
+    this._resetState();
+    UI.setConnState(ws?.readyState === WebSocket.OPEN ? "online" : "offline");
+
+    if (this.enabled) {
+      Charts.finalizeReplay();
+    } else {
+      Charts.restoreLive();
+    }
+    console.log("⏹ 回放已停止");
   },
 };
 
@@ -714,7 +944,6 @@ function initControlPanel() {
 
   // ── 键盘盲操 + 人类接管 ─────────────────────────────
   document.addEventListener("keydown", (e) => {
-    // 焦点在表单元素上时跳过，避免与复盘下拉框等冲突
     if (_isFormElement(e.target)) return;
 
     const action = KEY_MAP[e.code];
@@ -723,7 +952,6 @@ function initControlPanel() {
     e.preventDefault();
     if (e.repeat) return;
 
-    // 人类接管：SEMI_AUTO / AUTO 下按 WASD 方向键 → 强制降级到 MANUAL
     const isDirection = action !== "E_STOP";
     if (isDirection && (_currentMode === "SEMI_AUTO" || _currentMode === "AUTO")) {
       _applyMode("MANUAL");
@@ -740,14 +968,20 @@ function initControlPanel() {
     _pressedKeys.delete(e.code);
 
     const action = KEY_MAP[e.code];
-    if (action) UI.setKeyActive(action, false);
+    if (action) {
+      UI.setKeyActive(action, false);
+      // 通知后端按键已释放 → 物理引擎进入滑行衰减
+      sendControl(action + "_UP");
+    }
   });
 
-  // 窗口失焦时清理所有按键状态，防止按钮"卡住"
   window.addEventListener("blur", () => {
     for (const code of _pressedKeys) {
       const action = KEY_MAP[code];
-      if (action) UI.setKeyActive(action, false);
+      if (action) {
+        UI.setKeyActive(action, false);
+        sendControl(action + "_UP");
+      }
     }
     _pressedKeys.clear();
   });
@@ -763,6 +997,9 @@ function initPauseToggle() {
   const label = document.getElementById("pauseLabel");
 
   btn.addEventListener("click", () => {
+    // 回放进行中时，暂停按钮不可操作（已通过 pointerEvents 禁用）
+    if (Replay.active) return;
+
     isPaused = !isPaused;
 
     if (isPaused) {
