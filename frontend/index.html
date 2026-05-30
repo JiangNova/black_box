@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <title>黑盒 2.0 · 遥测大屏</title>
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
   <style>
@@ -13,6 +13,7 @@
       --accent: #00d4aa;
       --accent2: #3b9eff;
       --warn: #ffb020;
+      --danger: #ff4757;
       --text: #e6edf3;
       --muted: #6b7b8c;
       --glow: rgba(0, 212, 170, 0.15);
@@ -20,75 +21,89 @@
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
+    /* ═══════════════════════════════════════════════════════════
+       ROOT: 100vh 零滚动单屏
+       ═══════════════════════════════════════════════════════ */
+    html, body {
+      height: 100vh;
+      overflow: hidden;
+    }
+
     body {
       font-family: "Segoe UI", "SF Pro Display", system-ui, sans-serif;
       background: var(--bg);
       color: var(--text);
-      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
       background-image:
         radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0, 212, 170, 0.08), transparent),
         linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.4) 100%);
     }
 
+    /* ═══════════════════════════════════════════════════════════
+       HEADER — 紧凑工具条
+       ═══════════════════════════════════════════════════════════ */
     header {
+      flex-shrink: 0;
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 1rem;
-      flex-wrap: wrap;
-      padding: 1rem 1.5rem;
+      gap: 0.75rem;
+      padding: 0.45rem 0.75rem;
       border-bottom: 1px solid var(--border);
+      background: rgba(10, 14, 20, 0.9);
+      z-index: 10;
     }
 
     header h1 {
-      font-size: 1.1rem;
+      font-size: 0.95rem;
       font-weight: 600;
-      letter-spacing: 0.12em;
+      letter-spacing: 0.1em;
       text-transform: uppercase;
       color: var(--accent);
       flex-shrink: 0;
+      white-space: nowrap;
     }
 
     .replay-bar {
       display: flex;
       align-items: center;
-      gap: 0.75rem;
+      gap: 0.5rem;
       flex: 1;
       justify-content: center;
-      min-width: 240px;
+      min-width: 0;
     }
 
     .replay-toggle {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
-      font-size: 0.75rem;
-      letter-spacing: 0.06em;
+      gap: 0.4rem;
+      font-size: 0.68rem;
+      letter-spacing: 0.05em;
       color: var(--muted);
       cursor: pointer;
       user-select: none;
+      white-space: nowrap;
     }
 
     .replay-toggle input {
       accent-color: var(--accent);
-      width: 14px;
-      height: 14px;
+      width: 13px;
+      height: 13px;
       cursor: pointer;
     }
 
-    .replay-toggle.active span {
-      color: var(--warn);
-    }
+    .replay-toggle.active span { color: var(--warn); }
 
     #replaySelect {
       font-family: inherit;
-      font-size: 0.75rem;
+      font-size: 0.68rem;
       color: var(--text);
       background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 0.4rem 0.6rem;
-      min-width: 220px;
+      border-radius: 5px;
+      padding: 0.3rem 0.5rem;
+      min-width: 180px;
+      max-width: 240px;
       cursor: pointer;
     }
 
@@ -97,34 +112,31 @@
       cursor: not-allowed;
     }
 
-    #replaySelect option {
-      background: var(--panel);
-    }
+    #replaySelect option { background: var(--panel); }
 
     .replay-status {
-      font-size: 0.65rem;
+      font-size: 0.6rem;
       color: var(--warn);
-      letter-spacing: 0.05em;
+      letter-spacing: 0.04em;
       opacity: 0;
       transition: opacity 0.2s;
+      white-space: nowrap;
     }
 
-    .replay-status.visible {
-      opacity: 1;
-    }
+    .replay-status.visible { opacity: 1; }
 
     .export-btn {
       font-family: inherit;
-      font-size: 0.72rem;
-      letter-spacing: 0.06em;
+      font-size: 0.65rem;
+      letter-spacing: 0.05em;
       color: var(--text);
       background: rgba(0, 212, 170, 0.08);
       border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 0.4rem 0.75rem;
+      border-radius: 5px;
+      padding: 0.3rem 0.6rem;
       cursor: pointer;
       white-space: nowrap;
-      transition: background 0.15s, border-color 0.15s, opacity 0.2s;
+      transition: background 0.15s, border-color 0.15s;
     }
 
     .export-btn:hover:not(:disabled) {
@@ -137,89 +149,143 @@
       cursor: not-allowed;
     }
 
-    .conn {
+    /* ── 画布暂停拨动开关 ─────────────────────────────── */
+    .pause-toggle {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
-      font-size: 0.75rem;
-      color: var(--muted);
+      gap: 0.4rem;
+      font-family: inherit;
+      font-size: 0.68rem;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      color: var(--accent);
+      background: rgba(0, 212, 170, 0.06);
+      border: 1px solid rgba(0, 212, 170, 0.35);
+      border-radius: 5px;
+      padding: 0.35rem 0.65rem;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.25s ease;
+      user-select: none;
       flex-shrink: 0;
     }
 
+    .pause-toggle:hover {
+      border-color: var(--accent);
+      background: rgba(0, 212, 170, 0.14);
+      box-shadow: 0 0 12px rgba(0, 212, 170, 0.2);
+    }
+
+    .pause-toggle.paused {
+      color: #ff6b7a;
+      background: rgba(231, 76, 60, 0.12);
+      border-color: rgba(255, 107, 122, 0.55);
+      box-shadow: 0 0 14px rgba(231, 76, 60, 0.35);
+      animation: pause-pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pause-pulse {
+      0%, 100% { box-shadow: 0 0 14px rgba(231, 76, 60, 0.35); }
+      50%      { box-shadow: 0 0 22px rgba(231, 76, 60, 0.6);  }
+    }
+
+    .pause-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 7px var(--accent);
+      transition: background 0.25s, box-shadow 0.25s;
+    }
+
+    .pause-dot.paused {
+      background: #ff6b7a;
+      box-shadow: 0 0 8px #ff6b7a;
+    }
+
+    .conn {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.7rem;
+      color: var(--muted);
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+
     .conn-dot {
-      width: 8px;
-      height: 8px;
+      width: 7px;
+      height: 7px;
       border-radius: 50%;
       background: #e74c3c;
-      box-shadow: 0 0 8px #e74c3c;
+      box-shadow: 0 0 6px #e74c3c;
       transition: background 0.3s, box-shadow 0.3s;
     }
 
     .conn-dot.connecting {
       background: var(--warn);
-      box-shadow: 0 0 10px var(--warn);
+      box-shadow: 0 0 8px var(--warn);
     }
 
     .conn-dot.online {
       background: var(--accent);
-      box-shadow: 0 0 10px var(--accent);
+      box-shadow: 0 0 8px var(--accent);
     }
 
-    main { padding: 1.25rem 1.5rem 1.5rem; }
-
-    .cards {
+    /* ═══════════════════════════════════════════════════════════
+       TOP STRIP — 顶速测距三卡横条
+       ═══════════════════════════════════════════════════════════ */
+    .top-strip {
+      flex-shrink: 0;
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 1rem;
-      margin-bottom: 1.25rem;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 0.5rem;
+      padding: 0.5rem 0.75rem;
     }
 
-    .card {
+    .top-card {
       background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 1.25rem 1.5rem;
+      border-radius: 6px;
+      padding: 0.45rem 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
       position: relative;
       overflow: hidden;
     }
 
-    .card::before {
+    .top-card::before {
       content: "";
       position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
+      top: 0; left: 0; right: 0;
       height: 2px;
       background: linear-gradient(90deg, var(--accent), transparent);
     }
 
-    .card label {
-      display: block;
-      font-size: 0.7rem;
-      letter-spacing: 0.08em;
+    .top-card label {
+      font-size: 0.6rem;
+      letter-spacing: 0.06em;
       text-transform: uppercase;
       color: var(--muted);
-      margin-bottom: 0.5rem;
+      white-space: nowrap;
     }
 
-    .card .value {
-      font-size: 2.25rem;
+    .top-card .value {
+      font-size: 1.35rem;
       font-weight: 300;
       font-variant-numeric: tabular-nums;
-      line-height: 1.1;
+      line-height: 1;
     }
 
-    .card .value.status-ok { color: var(--accent); }
-    .card .value.status-warn { color: var(--warn); }
+    .top-card.steer .value { color: var(--accent2); }
+    .top-card.throttle .value { color: var(--accent); }
 
-    .card.steer .value { color: var(--accent2); }
-    .card.throttle .value { color: var(--accent); }
-
-    /* ── 三态模式切换器 ─────────────────────────────── */
+    /* 模式切换器 (在 top-card 内) */
     .mode-switcher {
       display: flex;
       gap: 0;
-      border-radius: 6px;
+      border-radius: 5px;
       overflow: hidden;
       border: 1px solid var(--border);
     }
@@ -227,21 +293,19 @@
     .mode-btn {
       flex: 1;
       font-family: inherit;
-      font-size: 0.76rem;
+      font-size: 0.68rem;
       font-weight: 500;
-      letter-spacing: 0.06em;
+      letter-spacing: 0.05em;
       color: var(--muted);
       background: transparent;
       border: none;
-      padding: 0.6rem 0.4rem;
+      padding: 0.35rem 0.5rem;
       cursor: pointer;
       transition: background 0.2s, color 0.2s, box-shadow 0.2s;
       white-space: nowrap;
     }
 
-    .mode-btn:not(:last-child) {
-      border-right: 1px solid var(--border);
-    }
+    .mode-btn:not(:last-child) { border-right: 1px solid var(--border); }
 
     .mode-btn:hover {
       color: var(--text);
@@ -268,93 +332,221 @@
       box-shadow: inset 0 -2px 0 var(--accent);
     }
 
-    .dashboard-grid {
+    /* ═══════════════════════════════════════════════════════════
+       MAIN GRID — 核心双栏：左 65% 感知 + 右 35% 控制台
+       ═══════════════════════════════════════════════════════════ */
+    .main-grid {
+      flex: 1;
+      min-height: 0;
       display: grid;
-      grid-template-columns: 1fr;
-      gap: 1rem;
-      margin-bottom: 1.25rem;
+      grid-template-columns: 67fr 33fr;
+      gap: 0.5rem;
+      padding: 0 0.75rem 0.5rem;
     }
 
-    .charts {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 1rem;
-    }
-
-    .side-panel {
+    /* ── 左栏：OAK-D (上) + LiDAR (下) ────────────────── */
+    .left-col {
+      min-height: 0;
       display: flex;
       flex-direction: column;
-      gap: 1rem;
+      gap: 0.5rem;
     }
 
-    .euler-cards {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 0.75rem;
+    /* ── 右栏：欧拉角 → 速度 → 姿态 → 控制台 ──────────── */
+    .right-col {
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
     }
 
-    .card.euler {
-      padding: 1rem 1.1rem;
-    }
-
-    .card.euler .value {
-      font-size: 1.65rem;
-      color: var(--accent2);
-    }
-
-    .chart-panel {
+    /* ── OAK-D 视觉占位框 ─────────────────────────────── */
+    .vision-placeholder {
+      flex: 45;
+      min-height: 0;
       background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 0.75rem 1rem 0.5rem;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
     }
 
-    .chart-panel h2 {
-      font-size: 0.75rem;
+    .vision-inner {
+      position: relative;
+      aspect-ratio: 16 / 9;
+      max-height: 100%;
+      max-width: 100%;
+      background: #05090f;
+      border: 1px solid rgba(30, 42, 58, 0.5);
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .vision-inner::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        repeating-linear-gradient(
+          0deg,
+          transparent,
+          transparent 2px,
+          rgba(0, 212, 170, 0.012) 2px,
+          rgba(0, 212, 170, 0.012) 4px
+        );
+      pointer-events: none;
+    }
+
+    .vision-inner::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, rgba(0, 212, 170, 0.12), transparent);
+      animation: vision-scan 4s ease-in-out infinite;
+    }
+
+    @keyframes vision-scan {
+      0%, 100% { top: 0; opacity: 0.2; }
+      50%      { top: calc(100% - 2px); opacity: 0.7; }
+    }
+
+    .vision-text {
+      font-size: clamp(0.6rem, 1vw, 0.8rem);
+      font-weight: 400;
+      letter-spacing: 0.08em;
+      color: #24303a;
+      text-align: center;
+      padding: 1rem;
+      z-index: 1;
+      transition: color 0.3s;
+      user-select: none;
+    }
+
+    .vision-inner:hover .vision-text { color: #354858; }
+
+    /* ── LiDAR 感知面板 ────────────────────────────────── */
+    .lidar-panel {
+      flex: 55;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--panel);
+      border: 1px solid rgba(0, 212, 170, 0.22);
+      border-radius: 6px;
+      padding: 0.4rem 0.6rem 0.3rem;
+      box-shadow: 0 0 18px rgba(0, 212, 170, 0.05);
+    }
+
+    .lidar-panel h2 {
+      flex-shrink: 0;
+      font-size: 0.68rem;
       font-weight: 500;
       letter-spacing: 0.06em;
       color: var(--muted);
-      margin-bottom: 0.25rem;
-      padding-left: 0.25rem;
+      margin-bottom: 0.15rem;
+      padding-left: 0.2rem;
     }
 
-    .chart-box { width: 100%; height: 280px; }
-    .chart-box.radar-box { height: 240px; }
-
-    footer {
-      text-align: center;
-      padding: 0.75rem;
-      font-size: 0.65rem;
-      color: var(--muted);
-      border-top: 1px solid var(--border);
+    .lidar-panel .chart-box {
+      flex: 1;
+      min-height: 0;
+      width: 100%;
     }
 
-    @media (min-width: 900px) {
-      .euler-cards { grid-template-columns: 1fr; }
+    /* ── 欧拉角三连卡 ─────────────────────────────────── */
+    .euler-cards {
+      flex-shrink: 0;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.4rem;
     }
 
-    @media (min-width: 1100px) {
-      .charts { grid-template-columns: 1fr 1fr; }
-      .dashboard-grid { grid-template-columns: 1fr 260px; }
-      .euler-cards { grid-template-columns: 1fr; }
-    }
-
-    @media (max-width: 720px) {
-      .cards { grid-template-columns: 1fr; }
-      .replay-bar { justify-content: flex-start; flex-wrap: wrap; }
-    }
-
-    .control-panel {
-      margin-top: 0;
+    .card.euler {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 0.4rem 0.55rem;
       position: relative;
+      overflow: hidden;
     }
 
+    .card.euler::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, var(--accent2), transparent);
+    }
+
+    .card.euler label {
+      display: block;
+      font-size: 0.55rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.15rem;
+    }
+
+    .card.euler .value {
+      font-size: 1.15rem;
+      font-weight: 300;
+      font-variant-numeric: tabular-nums;
+      color: var(--accent2);
+      line-height: 1.1;
+    }
+
+    /* ── 右侧图表面板 (speed / gyro) ──────────────────── */
+    .chart-panel {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 0.35rem 0.55rem 0.25rem;
+    }
+
+    .chart-panel h2 {
+      flex-shrink: 0;
+      font-size: 0.6rem;
+      font-weight: 500;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 0.1rem;
+      padding-left: 0.15rem;
+    }
+
+    .chart-panel .chart-box {
+      flex: 1;
+      min-height: 0;
+      width: 100%;
+    }
+
+    /* ── 控制台 (右侧底部) ────────────────────────────── */
+    .control-section {
+      flex-shrink: 0;
+      position: relative;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 0.4rem;
+    }
+
+    /* 全自动模式遮罩 */
     .control-mask {
       position: absolute;
       inset: 0;
       background: rgba(10, 14, 20, 0.78);
       backdrop-filter: blur(2px);
-      border-radius: 8px;
+      border-radius: 5px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -364,48 +556,36 @@
       transition: opacity 0.3s;
     }
 
-    .control-mask.visible {
-      opacity: 1;
-    }
+    .control-mask.visible { opacity: 1; }
 
     .control-mask span {
-      font-size: 0.85rem;
-      letter-spacing: 0.1em;
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
       color: var(--accent);
       font-weight: 500;
-    }
-
-    .control-card label {
-      margin-bottom: 1rem;
-    }
-
-    .kbd-ready {
-      font-size: 0.65rem;
-      color: var(--accent);
-      margin-left: 0.5rem;
-      letter-spacing: 0.08em;
-      opacity: 0.7;
+      text-align: center;
     }
 
     .control-grid {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 0.75rem;
-      margin-bottom: 1rem;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.3rem;
+      margin-bottom: 0.3rem;
     }
 
     .control-btn {
       font-family: inherit;
-      font-size: 0.85rem;
+      font-size: 0.7rem;
       font-weight: 500;
-      letter-spacing: 0.06em;
+      letter-spacing: 0.05em;
       color: var(--text);
       background: rgba(0, 212, 170, 0.06);
       border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 0.85rem 0.5rem;
+      border-radius: 4px;
+      padding: 0.4rem 0.3rem;
       cursor: pointer;
       transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+      position: relative;
     }
 
     .control-btn:hover {
@@ -416,116 +596,142 @@
     .control-btn.active {
       border-color: var(--accent);
       background: var(--glow);
-      box-shadow: 0 0 12px var(--glow);
+      box-shadow: 0 0 10px var(--glow);
     }
 
     .control-btn kbd {
       display: block;
-      font-size: 0.65rem;
+      font-size: 0.55rem;
       color: var(--muted);
-      margin-top: 0.25rem;
+      margin-top: 0.1rem;
       font-weight: 400;
     }
 
     .estop-btn {
       width: 100%;
       font-family: inherit;
-      font-size: 1rem;
+      font-size: 0.78rem;
       font-weight: 700;
-      letter-spacing: 0.14em;
+      letter-spacing: 0.1em;
       text-transform: uppercase;
       color: #fff;
       background: linear-gradient(180deg, #ff4757 0%, #c0392b 100%);
-      border: 2px solid #ff6b7a;
-      border-radius: 8px;
-      padding: 1rem;
+      border: 1.5px solid #ff6b7a;
+      border-radius: 5px;
+      padding: 0.5rem;
       cursor: pointer;
-      box-shadow: 0 0 20px rgba(231, 76, 60, 0.45);
+      box-shadow: 0 0 14px rgba(231, 76, 60, 0.4);
       transition: transform 0.1s, box-shadow 0.15s;
     }
 
     .estop-btn:hover {
-      box-shadow: 0 0 28px rgba(231, 76, 60, 0.65);
+      box-shadow: 0 0 22px rgba(231, 76, 60, 0.6);
     }
 
     .estop-btn:active,
     .estop-btn.active {
-      transform: scale(0.98);
-      box-shadow: 0 0 36px rgba(231, 76, 60, 0.85);
+      transform: scale(0.97);
+      box-shadow: 0 0 28px rgba(231, 76, 60, 0.8);
     }
 
     .estop-btn kbd {
       display: block;
-      font-size: 0.65rem;
-      color: rgba(255, 255, 255, 0.75);
-      margin-top: 0.35rem;
+      font-size: 0.55rem;
+      color: rgba(255, 255, 255, 0.7);
+      margin-top: 0.1rem;
       font-weight: 400;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.06em;
     }
 
-    @media (max-width: 600px) {
-      .control-grid { grid-template-columns: repeat(2, 1fr); }
-    }
-
-    /* ── AEB 脊髓反射 · 座舱红光警报 ──────────────────── */
+    /* ═══════════════════════════════════════════════════════════
+       AEB 脊髓反射 · 固定叠加横幅 (不挤占布局)
+       ═══════════════════════════════════════════════════════════ */
     @keyframes aeb-pulse {
-      0%, 100% {
-        box-shadow: inset 0 0 0 3px rgba(231, 76, 60, 0);
-      }
-      50% {
-        box-shadow: inset 0 0 0 3px rgba(231, 76, 60, 0.92);
-      }
+      0%, 100% { box-shadow: inset 0 0 0 3px rgba(231, 76, 60, 0); }
+      50%      { box-shadow: inset 0 0 0 3px rgba(231, 76, 60, 0.92); }
     }
 
     body.aeb-alert {
       animation: aeb-pulse 0.75s ease-in-out infinite;
     }
 
-    .aeb-banner {
+    .aeb-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 200;
       display: none;
       align-items: center;
       justify-content: center;
       gap: 0.5rem;
-      background: linear-gradient(90deg, rgba(231, 76, 60, 0.22), rgba(231, 76, 60, 0.08), rgba(231, 76, 60, 0.22));
-      border: 1px solid rgba(231, 76, 60, 0.55);
-      border-radius: 6px;
-      padding: 0.75rem 1rem;
-      margin-bottom: 1rem;
+      background: linear-gradient(90deg, rgba(231, 76, 60, 0.25), rgba(231, 76, 60, 0.1), rgba(231, 76, 60, 0.25));
+      border-bottom: 1px solid rgba(231, 76, 60, 0.55);
+      padding: 0.5rem 1rem;
       animation: aeb-banner-flash 1s ease-in-out infinite;
     }
 
     @keyframes aeb-banner-flash {
       0%, 100% { opacity: 0.85; }
-      50% { opacity: 1; }
+      50%      { opacity: 1; }
     }
 
-    .aeb-banner.visible {
+    .aeb-overlay.visible {
       display: flex;
     }
 
-    .aeb-banner-text {
-      font-size: 0.88rem;
+    .aeb-overlay-text {
+      font-size: 0.8rem;
       font-weight: 600;
       letter-spacing: 0.04em;
       color: #ff6b7a;
     }
+
+    /* ═══════════════════════════════════════════════════════════
+       响应式退阶
+       ═══════════════════════════════════════════════════════════ */
+    @media (max-width: 900px) {
+      .main-grid {
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr 1fr;
+      }
+    }
+
+    @media (max-width: 600px) {
+      header {
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        padding: 0.35rem 0.5rem;
+      }
+      header h1 { font-size: 0.8rem; }
+      .top-strip { grid-template-columns: 1fr; }
+      .euler-cards { grid-template-columns: repeat(3, 1fr); }
+      .control-grid { grid-template-columns: 1fr 1fr; }
+    }
   </style>
 </head>
 <body>
+
+  <!-- ══════ HEADER · 工具条 ══════ -->
   <header>
     <h1>黑盒 2.0 · 遥测大屏</h1>
 
     <div class="replay-bar">
       <label class="replay-toggle" id="replayToggleLabel">
         <input type="checkbox" id="replayToggle" />
-        <span>复盘模式</span>
+        <span>复盘</span>
       </label>
       <select id="replaySelect" disabled>
         <option value="">— 选择实验批次 —</option>
       </select>
-      <button type="button" class="export-btn" id="exportBtn" disabled>⬇ 导出数据集</button>
-      <span class="replay-status" id="replayStatus">⏳ 历史回放中 · 实时流已暂停</span>
+      <button type="button" class="export-btn" id="exportBtn" disabled>⬇ 导出</button>
+      <span class="replay-status" id="replayStatus">⏳ 历史回放中</span>
     </div>
+
+    <button type="button" class="pause-toggle" id="pauseToggle" title="冻结画布以便汇报讲解">
+      <span class="pause-dot" id="pauseDot"></span>
+      <span id="pauseLabel">画布渲染：实时</span>
+    </button>
 
     <div class="conn">
       <span class="conn-dot" id="connDot"></span>
@@ -533,81 +739,91 @@
     </div>
   </header>
 
-  <main>
-    <div class="aeb-banner" id="aebBanner">
-      <span class="aeb-banner-text">⚠ 距障碍物 &lt; 0.2m，底层 AEB 强制介入截断动力！</span>
+  <!-- ══════ TOP STRIP · 速测模式三卡 ══════ -->
+  <div class="top-strip">
+    <div class="top-card steer">
+      <label>SPEED_MPS</label>
+      <div class="value" id="valSteer">—</div>
+    </div>
+    <div class="top-card throttle">
+      <label>LIDAR_FRONT</label>
+      <div class="value" id="valThrottle">—</div>
+    </div>
+    <div class="top-card">
+      <label>RUN_MODE</label>
+      <div class="mode-switcher" id="modeSwitcher">
+        <button type="button" class="mode-btn mode-manual mode-active" data-mode="MANUAL">手动</button>
+        <button type="button" class="mode-btn mode-semi" data-mode="SEMI_AUTO">半自动</button>
+        <button type="button" class="mode-btn mode-auto" data-mode="AUTO">全自动</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════ MAIN GRID · 双栏核心 ══════ -->
+  <div class="main-grid">
+
+    <!-- ── 左栏 67%：OAK-D 视觉预留 (上) + LiDAR 360° 点云 (下) ── -->
+    <div class="left-col">
+
+      <div class="vision-placeholder">
+        <div class="vision-inner">
+          <span class="vision-text">[ OAK-D Lite 视觉 AI 推流通道 - 硬件就绪后激活 ]</span>
+        </div>
+      </div>
+
+      <div class="lidar-panel">
+        <h2>感知 · lidar_360 · 极坐标点云 BEV</h2>
+        <div class="chart-box" id="chartLidar"></div>
+      </div>
+
     </div>
 
-    <section class="cards">
-      <div class="card steer">
-        <label>speed_mps · 线速度</label>
-        <div class="value" id="valSteer">—</div>
-      </div>
-      <div class="card throttle">
-        <label>lidar_front · 前向测距</label>
-        <div class="value" id="valThrottle">—</div>
-      </div>
-      <div class="card">
-        <label>run_mode · 运行模式</label>
-        <div class="mode-switcher" id="modeSwitcher">
-          <button type="button" class="mode-btn mode-manual mode-active" data-mode="MANUAL">纯手动</button>
-          <button type="button" class="mode-btn mode-semi" data-mode="SEMI_AUTO">半自动</button>
-          <button type="button" class="mode-btn mode-auto" data-mode="AUTO">全自动</button>
-        </div>
-      </div>
-    </section>
+    <!-- ── 右栏 33%：欧拉角 → 图表 → 控制台 ── -->
+    <div class="right-col">
 
-    <section class="dashboard-grid">
-      <div class="charts">
-        <div class="chart-panel">
-          <h2>底盘 · speed_mps (m/s)</h2>
-          <div class="chart-box" id="chartControl"></div>
+      <div class="euler-cards">
+        <div class="card euler">
+          <label>YAW · 偏航</label>
+          <div class="value" id="valYaw">0.00</div>
         </div>
-        <div class="chart-panel">
-          <h2>姿态 · gyro_z_rads (rad/s)</h2>
-          <div class="chart-box" id="chartGyro"></div>
+        <div class="card euler">
+          <label>PITCH · 俯仰</label>
+          <div class="value" id="valPitch">0.00</div>
+        </div>
+        <div class="card euler">
+          <label>ROLL · 横滚</label>
+          <div class="value" id="valRoll">0.00</div>
         </div>
       </div>
 
-      <aside class="side-panel">
-        <div class="euler-cards">
-          <div class="card euler">
-            <label>yaw · 偏航角</label>
-            <div class="value" id="valYaw">0.00</div>
-          </div>
-          <div class="card euler">
-            <label>pitch · 俯仰角</label>
-            <div class="value" id="valPitch">0.00</div>
-          </div>
-          <div class="card euler">
-            <label>roll · 横滚角</label>
-            <div class="value" id="valRoll">0.00</div>
-          </div>
-        </div>
+      <div class="chart-panel">
+        <h2>speed_mps (m/s)</h2>
+        <div class="chart-box" id="chartControl"></div>
+      </div>
 
-        <div class="chart-panel">
-          <h2>感知 · lidar_zones_m (m)</h2>
-          <div class="chart-box radar-box" id="chartLidar"></div>
-        </div>
-      </aside>
-    </section>
+      <div class="chart-panel">
+        <h2>gyro_z_rads (rad/s)</h2>
+        <div class="chart-box" id="chartGyro"></div>
+      </div>
 
-    <section class="control-panel">
-      <div class="control-mask" id="controlMask"><span>AI 控制中 · 按 WASD 接管</span></div>
-      <div class="card control-card">
-        <label>逆向控制 · 线控面板 <span class="kbd-ready" id="kbdReady">⌨ WASD+E</span></label>
+      <div class="control-section">
+        <div class="control-mask" id="controlMask"><span>AI 控制中<br/>按 WASD 接管</span></div>
         <div class="control-grid">
           <button type="button" class="control-btn" data-action="FORWARD">前进<kbd>W</kbd></button>
           <button type="button" class="control-btn" data-action="BACKWARD">后退<kbd>S</kbd></button>
           <button type="button" class="control-btn" data-action="LEFT">左转<kbd>A</kbd></button>
           <button type="button" class="control-btn" data-action="RIGHT">右转<kbd>D</kbd></button>
         </div>
-        <button type="button" class="estop-btn" data-action="E_STOP">紧急急停 · E-STOP<kbd>E</kbd></button>
+        <button type="button" class="estop-btn" data-action="E_STOP">E-STOP<kbd>E</kbd></button>
       </div>
-    </section>
-  </main>
 
-  <footer>WebSocket · ws://127.0.0.1:8000/ws · 实时 50 点窗口 / 复盘 dataZoom + LTTB</footer>
+    </div>
+  </div>
+
+  <!-- ══════ AEB 叠加横幅 (不挤占布局) ══════ -->
+  <div class="aeb-overlay" id="aebBanner">
+    <span class="aeb-overlay-text">⚠ 距障碍物 &lt; 0.2m，底层 AEB 强制介入截断动力！</span>
+  </div>
 
   <script src="js/dashboard.js"></script>
 </body>

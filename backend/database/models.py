@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ChassisData(BaseModel):
@@ -21,6 +21,7 @@ class LidarZones(BaseModel):
 
 class PerceptionData(BaseModel):
     lidar_zones_m: LidarZones
+    lidar_360: list = Field(default_factory=list)
 
 
 class TelemetryData(BaseModel):

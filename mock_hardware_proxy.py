@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import math
+import random
 import sys
 import time
 
@@ -107,6 +108,15 @@ def build_telemetry_frame(t0: float) -> dict:
 
         run_mode = current_mode
 
+    # ── 360° 激光雷达极坐标点云 (BEV) ─────────────────
+    lidar_360 = []
+    now = time.time()
+    for i in range(360):
+        shape_wave = 0.5 * math.sin(now + i / 20.0)
+        noise = random.uniform(-0.1, 0.1)
+        radius = max(0.15, round(2.0 + shape_wave + noise, 2))
+        lidar_360.append([i, radius])
+
     return {
         "timestamp_us": time.time_ns() // 1_000,
         "run_mode": run_mode,
@@ -126,7 +136,8 @@ def build_telemetry_frame(t0: float) -> dict:
                 "front": round(front_m, 2),
                 "left": round(left_m, 2),
                 "right": round(right_m, 2),
-            }
+            },
+            "lidar_360": lidar_360,
         },
     }
 

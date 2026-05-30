@@ -6,14 +6,13 @@
  *   3. ECharts 渲染层
  *   4. 历史复盘层
  */
-
-const LIDAR_MAX_M = 5;
 const MAX_LIVE_POINTS = 50;
 const WS_URL = "ws://127.0.0.1:8000/ws";
 const RECONNECT_MS = 2000;
 
 /* ── 运行模式状态 ──────────────────────────────────── */
 let _currentMode = "MANUAL";
+let isPaused = false;
 
 function _applyMode(mode) {
   if (_currentMode === mode) return;
@@ -230,18 +229,19 @@ function sendControl(action) {
 }
 
 function onTelemetry(data) {
+  // 数据缓冲区始终更新，保证解除暂停后图表能立即追上最新数据
   Charts.pushLivePoint(
     data.timestamp_us,
     Number(data.chassis?.speed_mps),
     Number(data.imu?.gyro_z_rads)
   );
+
+  // 画布暂停：底层数据仍在流转，但冻结所有 setOption 重绘
+  if (isPaused) return;
+
   UI.updateCards(data);
   UI.setAebAlert(!!data.aeb_active);
-  Charts.updateLidarRadar(
-    data.perception?.lidar_zones_m?.front,
-    data.perception?.lidar_zones_m?.left,
-    data.perception?.lidar_zones_m?.right
-  );
+  Charts.updateLidarPolar(data.perception?.lidar_360);
   Charts.refreshLive();
 }
 
@@ -335,8 +335,7 @@ const Charts = {
     this.chartLidar = echarts.init(document.getElementById("chartLidar"));
 
     this.applyLiveLineOptions();
-    this.initLidarRadar();
-    this.updateLidarRadar(null, null, null);
+    this.initLidarPolar();
 
     window.addEventListener("resize", () => {
       this.chartSteer.resize();
@@ -409,55 +408,73 @@ const Charts = {
     });
   },
 
-  initLidarRadar() {
+  initLidarPolar() {
     this.chartLidar.setOption({
       backgroundColor: "transparent",
+      animation: false,
       tooltip: {
         trigger: "item",
         backgroundColor: "rgba(17, 24, 32, 0.95)",
         borderColor: "#1e2a3a",
         textStyle: { color: "#e6edf3", fontSize: 12 },
+        formatter: (params) => {
+          const d = params.data;
+          if (!d) return "";
+          return `angle: ${d[0]}°<br/>dist: ${d[1]} m`;
+        },
       },
-      radar: {
-        center: ["50%", "55%"],
-        radius: "62%",
-        indicator: [
-          { name: "Front", max: LIDAR_MAX_M },
-          { name: "Left", max: LIDAR_MAX_M },
-          { name: "Right", max: LIDAR_MAX_M },
-        ],
-        axisName: { color: "#6b7b8c", fontSize: 11 },
-        splitLine: { lineStyle: { color: "#1e2a3a" } },
-        splitArea: { show: false },
+      polar: {
+        center: ["50%", "52%"],
+        radius: "78%",
+      },
+      angleAxis: {
+        type: "value",
+        min: 0,
+        max: 360,
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: { show: false },
+        axisLabel: { show: false },
+      },
+      radiusAxis: {
+        type: "value",
+        min: 0,
+        max: 3.0,
         axisLine: { lineStyle: { color: "#1e2a3a" } },
+        axisTick: { show: false },
+        splitLine: {
+          lineStyle: { color: "#1e2a3a", type: "dashed", width: 1 },
+        },
+        axisLabel: { color: "#6b7b8c", fontSize: 10 },
       },
       series: [
         {
-          type: "radar",
-          symbol: "circle",
-          symbolSize: 4,
-          lineStyle: { width: 2, color: "#00d4aa" },
+          id: "lidarScatter",
+          type: "scatter",
+          coordinateSystem: "polar",
+          symbolSize: 3,
+          silent: true,
+          progressive: 0,
           itemStyle: { color: "#00d4aa" },
-          areaStyle: { color: "rgba(0, 212, 170, 0.18)" },
-          data: [{ value: [LIDAR_MAX_M, LIDAR_MAX_M, LIDAR_MAX_M], name: "lidar_zones_m" }],
+          data: [],
         },
       ],
     });
   },
 
-  normalizeLidar(value) {
-    const n = Number(value);
-    return Number.isFinite(n) ? Math.min(Math.max(n, 0), LIDAR_MAX_M) : LIDAR_MAX_M;
-  },
-
-  updateLidarRadar(front, left, right) {
-    const f = this.normalizeLidar(front);
-    const l = this.normalizeLidar(left);
-    const r = this.normalizeLidar(right);
-
-    this.chartLidar.setOption({
-      series: [{ data: [{ value: [f, l, r], name: "lidar_zones_m" }] }],
-    });
+  updateLidarPolar(lidar360) {
+    const data = lidar360 && Array.isArray(lidar360) ? lidar360 : [];
+    this.chartLidar.setOption(
+      {
+        series: [
+          {
+            id: "lidarScatter",
+            data,
+          },
+        ],
+      },
+      { notMerge: false, lazyUpdate: false }
+    );
   },
 
   pushLivePoint(tsUs, speedMps, gyroZRads) {
@@ -539,14 +556,8 @@ const Charts = {
       ],
     });
 
-    const last = (columnar.count ?? 0) - 1;
-    if (last >= 0) {
-      this.updateLidarRadar(
-        columnar.lidar_front_m?.[last],
-        columnar.lidar_left_m?.[last],
-        columnar.lidar_right_m?.[last]
-      );
-    }
+    // ── lidar_360 点云在复盘模式下重置为空（不在历史快照中存储 360 点）──
+    this.updateLidarPolar([]);
 
     UI.updateFromColumnar(columnar);
   },
@@ -557,7 +568,7 @@ const Charts = {
     this.gyroData = [];
     this.applyLiveLineOptions();
     this.refreshLive();
-    this.updateLidarRadar(null, null, null);
+    this.updateLidarPolar([]);
     UI.resetEuler();
   },
 };
@@ -743,6 +754,30 @@ function initControlPanel() {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   画布暂停 / 汇报模式
+   ═══════════════════════════════════════════════════════════ */
+
+function initPauseToggle() {
+  const btn = document.getElementById("pauseToggle");
+  const dot = document.getElementById("pauseDot");
+  const label = document.getElementById("pauseLabel");
+
+  btn.addEventListener("click", () => {
+    isPaused = !isPaused;
+
+    if (isPaused) {
+      btn.classList.add("paused");
+      dot.classList.add("paused");
+      label.textContent = "画布渲染：已暂停";
+    } else {
+      btn.classList.remove("paused");
+      dot.classList.remove("paused");
+      label.textContent = "画布渲染：实时";
+    }
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════
    启动入口
    ═══════════════════════════════════════════════════════════ */
 
@@ -750,4 +785,5 @@ Charts.init();
 Replay.init();
 initModeSwitcher();
 initControlPanel();
+initPauseToggle();
 connect();
