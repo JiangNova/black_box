@@ -101,15 +101,9 @@ CSV_HEADER = [
     "chassis_roll",
     "chassis_aeb_active",
     "lidar_front_m",
-<<<<<<< HEAD
     "vision_has_obstacle",
     "vision_obstacle_label",
     "vision_distance_m",
-=======
-    "lidar_left_m",
-    "lidar_right_m",
-    "lidar_360_json",
->>>>>>> 214b8b9faf04ac6ebbd8e98ba2d80f1c260be076
 ]
 
 

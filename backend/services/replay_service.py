@@ -155,7 +155,7 @@ class ReplayService:
 
         try:
             async for frame in db_logger.get_replay_frames(run_id):
-                current_ts = frame["timestamp_us"]
+                current_ts = frame["timestamp"]
 
                 if prev_ts_us is not None:
                     delta_us = current_ts - prev_ts_us

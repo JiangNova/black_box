@@ -232,19 +232,15 @@ function connect() {
   ws.onmessage = (ev) => {
     try {
       const data = JSON.parse(ev.data);
-<<<<<<< HEAD
-      if (data.timestamp == null) return;
-      onTelemetry(data);
-=======
 
       // ── 回放控制信令 ──────────────────────────────
-      if (data.type != null && data.timestamp_us == null) {
+      if (data.type != null && data.timestamp == null) {
         handleReplaySignal(data);
         return;
       }
 
-      // ── 遥测帧（实时或回放，格式完全一致）─────────
-      if (data.timestamp_us != null) {
+      // ── 遥测帧（实时或回放，三通道格式完全一致）───
+      if (data.timestamp != null) {
         // 实时模式下，复盘 checkbox 未勾选 → 正常渲染
         // 回放模式下，Replay.active → 正常渲染
         // 复盘模式但未激活 → 过渡态，跳过（防止混杂数据）
@@ -253,7 +249,6 @@ function connect() {
         }
         return;
       }
->>>>>>> 214b8b9faf04ac6ebbd8e98ba2d80f1c260be076
     } catch {
       console.warn("无效 JSON:", ev.data);
     }

@@ -160,7 +160,6 @@ def update_physics() -> None:
 
 
 def build_telemetry_frame(t0: float) -> dict:
-<<<<<<< HEAD
     """
     简易状态机物理引擎：急停 / AEB 锁死时运动学量强制归零。
 
@@ -168,9 +167,6 @@ def build_telemetry_frame(t0: float) -> dict:
     -------
     dict  三通道嵌套遥测帧 (TelemetryFrame 格式)
     """
-=======
-    """每帧调用：物理引擎更新 → 组装完整遥测帧。"""
->>>>>>> 214b8b9faf04ac6ebbd8e98ba2d80f1c260be076
     global aeb_active
 
     # ── 第一件事：跑一帧物理 ───────────────────────────────
@@ -185,15 +181,9 @@ def build_telemetry_frame(t0: float) -> dict:
         run_mode = "ESTOP"
         aeb_active = False
     else:
-<<<<<<< HEAD
-        # ── 原始物理计算 ──────────────────────────────────
-        raw_speed = 1.25 + 0.75 * math.sin(t * 0.8)
-        gyro_z_rads = 0.15 * math.sin(t * 1.5)
-=======
-        # ── 雷达模拟（仍使用正弦波生成虚拟障碍物距离）──────
+        # ── 雷达模拟（使用正弦波生成虚拟障碍物距离）──────
         left_m = 1.8 + 0.6 * math.cos(t * 0.7)
         right_m = 1.8 + 0.6 * math.sin(t * 0.9)
->>>>>>> 214b8b9faf04ac6ebbd8e98ba2d80f1c260be076
 
         if current_mode == "MANUAL":
             front_m = max(0.35, 4.2 - current_speed * 1.4 + 0.25 * math.sin(t * 1.1))
@@ -298,27 +288,16 @@ async def upstream_worker(client: Client) -> None:
             )
         logger.info(
             "TX #%d%s | mode=%s speed=%.3f m/s | gyro_z=%.4f rad/s | "
-<<<<<<< HEAD
-            "lidar front=%.2f m%s",
-=======
-            "thr=%.0f str=%.0f | lidar f/l/r=%.2f/%.2f/%.2f m",
->>>>>>> 214b8b9faf04ac6ebbd8e98ba2d80f1c260be076
+            "thr=%.0f str=%.0f | lidar front=%.2f m%s",
             frame_count,
             tag_str,
             chassis["run_mode"],
             chassis["speed_mps"],
-<<<<<<< HEAD
             chassis["gyro_z_rads"],
-            lidar["front_m"],
-            vision_str,
-=======
-            imu["gyro_z_rads"],
             throttle_input,
             steer_input,
-            lidar["front"],
-            lidar["left"],
-            lidar["right"],
->>>>>>> 214b8b9faf04ac6ebbd8e98ba2d80f1c260be076
+            lidar["front_m"],
+            vision_str,
         )
 
         next_tick += INTERVAL_S
